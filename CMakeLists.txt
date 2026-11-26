@@ -46,6 +46,7 @@ include(cmake/libmpv.cmake)
 add_library(wallflow_core
   src/wallflow/version.cpp
   src/wallflow/desktop_layout.cpp
+  src/wallflow/coverage.cpp
   src/wallflow/win/desktop.cpp
   src/wallflow/win/wallpaper_window.cpp
   src/wallflow/win/tray_icon.cpp
