@@ -1,0 +1,14 @@
+# Build output
+build/
+out/
+CMakeUserPresets.json
+
+# Personal notes and assistant instructions (not part of the project)
+notes/
+CLAUDE.md
+.claude/
+
+# Editors
+.vs/
+.vscode/
+*.user
