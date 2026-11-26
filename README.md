@@ -4,7 +4,7 @@
 
 A lightweight live wallpaper app for Windows: it plays videos behind the desktop icons, rotates through a folder of videos with seamless switches, and pauses whenever a maximized or full-screen window (such as a game) covers the screen.
 
-**Status: work in progress.** WallFlow plays one video in a loop behind the desktop icons, decoded on the GPU, lives in the system tray, and recovers by itself when Explorer restarts. Pausing for games and folder rotation come next. See the [Roadmap](#roadmap).
+**Status: work in progress.** WallFlow plays one video in a loop behind the desktop icons, decoded on the GPU, pauses while a maximized or full-screen window covers the screen, the PC is locked or the display is off, lives in the system tray, and recovers by itself when Explorer restarts. Seamless loop points and folder rotation come next. See the [Roadmap](#roadmap).
 
 **Tech stack:** C++20, Win32 API, libmpv (FFmpeg, Direct3D 11), MSVC, CMake, GoogleTest, GitHub Actions.
 
@@ -35,7 +35,9 @@ src/
   main.cpp         the program's entry point
   wallflow/        everything else, built as a library so tests can link it
     desktop_layout   where the wallpaper window must go (pure logic, unit tested)
-    win/             Win32 code: desktop attachment, wallpaper window, tray icon, app
+    coverage         the pause rule: is a real window covering the monitor? (pure logic, unit tested)
+    win/             Win32 code: desktop attachment, wallpaper window, tray icon, window
+                     events, libmpv player, app
 tests/             GoogleTest unit tests
 .github/workflows/ CI: MSVC Debug and AddressSanitizer builds on Windows
 ```
@@ -49,6 +51,15 @@ Windows has no official API for this. WallFlow sends Explorer the undocumented m
 
 The choice is made by a pure function over a snapshot of the window tree, so both layouts are unit tested.
 
+## How it knows when to pause
+
+Nothing is polled. WallFlow subscribes to Windows' accessibility events (`SetWinEventHook`): focus changes, windows shown, hidden, minimized, cloaked, moved or resized. A burst of events (dragging a window sends dozens) is collapsed into one check 200 ms after it ends. The check takes a snapshot of the visible windows and asks a pure, unit-tested function whether one covers the monitor:
+
+- **Covers:** a maximized window on that monitor, or a window as big as the whole monitor (full-screen games and videos).
+- **Does not:** the desktop and taskbar, minimized windows, click-through overlays, and *cloaked* windows. Windows 11 keeps suspended apps and some system windows "visible" but undrawn; on the development machine a cloaked Settings app was maximized and a cloaked system window was exactly screen-sized, so without this filter the wallpaper would never play.
+
+Lock/unlock (`WTSRegisterSessionNotification`) and display on/off (`RegisterPowerSettingNotification`) are pushed by Windows the same way.
+
 ## Measured so far
 
 Windows 11 build 26300, NVIDIA RTX 3070, 1920x1080 monitor, release build (2026-11-27):
@@ -57,6 +68,7 @@ Windows 11 build 26300, NVIDIA RTX 3070, 1920x1080 monitor, release build (2026-
 |---|---|
 | No video loaded | 42 KB executable, 1.5 MB private memory, 0 ms CPU over 30 s |
 | Playing a 4K H.264 video | 0.4% of total CPU (12 logical cores), GPU video decoder 14.9%, GPU 3D 2.1% |
+| Paused (4K video loaded, covered by a maximized window) | 31 ms of CPU in 30 s, GPU video decoder 0%, GPU 3D 0% |
 | Memory while playing 4K | 177 MB working set, about 345 MB private; mpv with nothing loaded: 19 MB |
 | Same video decoded on the CPU instead | 61.5% of one core and 681 MB private: why hardware decoding is on |
 
@@ -64,14 +76,14 @@ Almost all of the memory is the decoder's pool of 4K frames (about 12 MB each). 
 
 ## Troubleshooting
 
-Set `WALLFLOW_MPV_LOG` to a file path before starting WallFlow and mpv writes its detailed log there (which decoder was used, whether hardware decoding worked, errors).
+Set `WALLFLOW_LOG` to a file path before starting WallFlow and it logs what it does there, with timestamps (attached, paused and why, playing). Set `WALLFLOW_MPV_LOG` and mpv writes its own detailed log (which decoder was used, whether hardware decoding worked, errors).
 
 ## Roadmap
 
 - [x] Project skeleton: CMake presets, unit tests, CI
 - [x] A window behind the desktop icons, tray icon, survives an Explorer restart
 - [x] Play one video with hardware decoding (libmpv)
-- [ ] Pause when a maximized or full-screen window covers the screen, and while locked
+- [x] Pause when a maximized or full-screen window covers the screen, while locked, and while the display is off
 - [ ] Two-player engine: loop between a start and end point with no visible gap
 - [ ] Rotate through a folder of videos with seamless switches
 - [ ] Config file, audio settings, start with Windows

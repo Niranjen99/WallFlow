@@ -1,7 +1,13 @@
 #include "wallflow/win/app.hpp"
 
+#include <wtsapi32.h>
+
+#include <cstring>
 #include <stdexcept>
 #include <string>
+
+#include "wallflow/coverage.hpp"
+#include "wallflow/win/log.hpp"
 
 namespace wallflow::win {
 
@@ -13,22 +19,16 @@ constexpr UINT kPlayerMessage = WM_APP + 2;  // mpv has events waiting
 constexpr UINT_PTR kAttachTimer = 1;
 constexpr UINT kAttachRetryMs = 500;
 constexpr int kMaxAttachAttempts = 20;  // 10 seconds
+constexpr UINT_PTR kCoverageTimer = 2;
+// Window events come in bursts (dragging a window sends dozens). The check runs once, this
+// long after the last event of a burst.
+constexpr UINT kCoverageDelayMs = 200;
 
-// mpv reports errors as UTF-8 text; Windows wants UTF-16.
-std::wstring to_wide(const std::string& utf8) {
-    if (utf8.empty()) {
-        return {};
-    }
-    const int size = static_cast<int>(utf8.size());
-    const int length = ::MultiByteToWideChar(CP_UTF8, 0, utf8.data(), size, nullptr, 0);
-    std::wstring wide(static_cast<std::size_t>(length), L'\0');
-    ::MultiByteToWideChar(CP_UTF8, 0, utf8.data(), size, wide.data(), length);
-    return wide;
-}
-
-void log(const std::wstring& text) {
-    // Visible in Visual Studio's Output window or Sysinternals DebugView.
-    ::OutputDebugStringW((L"WallFlow: " + text + L"\n").c_str());
+Rect primary_monitor() {
+    MONITORINFO info{};
+    info.cbSize = sizeof info;
+    ::GetMonitorInfoW(::MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY), &info);
+    return {info.rcMonitor.left, info.rcMonitor.top, info.rcMonitor.right, info.rcMonitor.bottom};
 }
 
 }  // namespace
@@ -56,6 +56,15 @@ App::App(HINSTANCE instance, std::filesystem::path video)
 
     tray_ = std::make_unique<TrayIcon>(hwnd_, kTrayMessage);
     tray_->show();
+
+    // Lock and unlock arrive as WM_WTSSESSION_CHANGE; display on/off as WM_POWERBROADCAST.
+    // Both are notifications Windows pushes to us: nothing is polled.
+    ::WTSRegisterSessionNotification(hwnd_, NOTIFY_FOR_THIS_SESSION);
+    display_notify_ = ::RegisterPowerSettingNotification(hwnd_, &GUID_CONSOLE_DISPLAY_STATE,
+                                                         DEVICE_NOTIFY_WINDOW_HANDLE);
+    events_ = std::make_unique<WindowEvents>(hwnd_, kCoverageTimer, kCoverageDelayMs);
+
+    check_coverage();  // something may already be maximized when WallFlow starts
     start_wallpaper();
 }
 
@@ -122,11 +131,33 @@ void App::start_player() {
     try {
         player_ = std::make_unique<MpvPlayer>(
             wallpaper_->hwnd(), [controller] { ::PostMessageW(controller, kPlayerMessage, 0, 0); });
+        // A new player starts playing; if it should be paused right now (e.g. Explorer
+        // restarted while a game runs), pause it before the file loads.
+        paused_ = false;
+        update_pause();
         player_->play(video_);
-        log(L"playing " + video_.wstring());
+        log(L"loading " + video_.wstring());
     } catch (const std::exception& e) {
         player_.reset();
         log(L"player failed: " + to_wide(e.what()));
+    }
+}
+
+void App::check_coverage() {
+    const bool covered = is_monitor_covered(primary_monitor(), snapshot_windows());
+    if (covered != covered_) {
+        covered_ = covered;
+        log(covered ? L"monitor covered by a window" : L"monitor uncovered");
+        update_pause();
+    }
+}
+
+void App::update_pause() {
+    const bool pause = covered_ || locked_ || display_off_;
+    if (player_ && pause != paused_) {
+        player_->set_paused(pause);
+        paused_ = pause;
+        log(pause ? L"paused" : L"playing");
     }
 }
 
@@ -134,6 +165,12 @@ void App::quit() {
     // Remove the wallpaper and the tray icon while the controller window still exists (the
     // tray icon is identified by its owner window), then end the message loop.
     ::KillTimer(hwnd_, kAttachTimer);
+    events_.reset();
+    if (display_notify_ != nullptr) {
+        ::UnregisterPowerSettingNotification(display_notify_);
+        display_notify_ = nullptr;
+    }
+    ::WTSUnRegisterSessionNotification(hwnd_);
     player_.reset();
     wallpaper_.reset();
     tray_.reset();
@@ -176,8 +213,36 @@ LRESULT App::on_message(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
         case WM_TIMER:
             if (wparam == kAttachTimer) {
                 try_attach();
+            } else if (wparam == kCoverageTimer) {
+                ::KillTimer(hwnd, kCoverageTimer);  // timers repeat; this one should fire once
+                check_coverage();
             }
             return 0;
+
+        case WM_WTSSESSION_CHANGE:
+            if (wparam == WTS_SESSION_LOCK || wparam == WTS_SESSION_UNLOCK) {
+                locked_ = wparam == WTS_SESSION_LOCK;
+                log(locked_ ? L"session locked" : L"session unlocked");
+                update_pause();
+            }
+            return 0;
+
+        case WM_POWERBROADCAST:
+            if (wparam == PBT_POWERSETTINGCHANGE) {
+                // lparam points at a block Windows owns, valid only during this message.
+                const auto* setting = reinterpret_cast<const POWERBROADCAST_SETTING*>(lparam);
+                if (setting->PowerSetting == GUID_CONSOLE_DISPLAY_STATE &&
+                    setting->DataLength == sizeof(DWORD)) {
+                    // Data is a DWORD: 0 = off, 1 = on, 2 = dimmed (still visible).
+                    DWORD state = 0;
+                    std::memcpy(&state, setting->Data, sizeof state);
+                    display_off_ = state == 0;
+                    log(display_off_ ? L"display off" : L"display on");
+                    update_pause();
+                }
+                return TRUE;
+            }
+            break;
 
         case WM_DISPLAYCHANGE:
             // Resolution or monitor layout changed: fit the primary monitor again.

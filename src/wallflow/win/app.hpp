@@ -8,6 +8,7 @@
 #include "wallflow/win/mpv_player.hpp"
 #include "wallflow/win/tray_icon.hpp"
 #include "wallflow/win/wallpaper_window.hpp"
+#include "wallflow/win/window_events.hpp"
 #include "wallflow/win/window_proc.hpp"
 
 namespace wallflow::win {
@@ -41,6 +42,10 @@ private:
     void quit();
     void start_player();
 
+    // Pause rule: re-checks whether a window covers the monitor, then applies all reasons.
+    void check_coverage();
+    void update_pause();
+
     HINSTANCE instance_;
     HWND hwnd_ = nullptr;
     UINT taskbar_created_ = 0;  // message number Windows assigns to "TaskbarCreated"
@@ -51,6 +56,14 @@ private:
     std::unique_ptr<WallpaperWindow> wallpaper_;
     std::unique_ptr<MpvPlayer> player_;
     int attach_attempts_ = 0;
+
+    std::unique_ptr<WindowEvents> events_;
+    HPOWERNOTIFY display_notify_ = nullptr;
+    // Reasons to pause. Playback runs only when all are false.
+    bool covered_ = false;       // a maximized or full-screen window covers the monitor
+    bool locked_ = false;        // the session is locked (lock screen)
+    bool display_off_ = false;   // the monitor is off (power saving)
+    bool paused_ = false;        // what was last sent to the player
 };
 
 }  // namespace wallflow::win
