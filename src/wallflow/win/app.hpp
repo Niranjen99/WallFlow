@@ -2,8 +2,10 @@
 
 #include <windows.h>
 
+#include <filesystem>
 #include <memory>
 
+#include "wallflow/win/mpv_player.hpp"
 #include "wallflow/win/tray_icon.hpp"
 #include "wallflow/win/wallpaper_window.hpp"
 #include "wallflow/win/window_proc.hpp"
@@ -17,7 +19,8 @@ namespace wallflow::win {
 // Windows sends the "TaskbarCreated" broadcast only to top-level windows.
 class App {
 public:
-    explicit App(HINSTANCE instance);
+    // `video`: file to play in a loop; empty shows a solid colour.
+    App(HINSTANCE instance, std::filesystem::path video);
     ~App();
 
     App(const App&) = delete;
@@ -36,12 +39,17 @@ private:
     void start_wallpaper();
     void try_attach();
     void quit();
+    void start_player();
 
     HINSTANCE instance_;
     HWND hwnd_ = nullptr;
     UINT taskbar_created_ = 0;  // message number Windows assigns to "TaskbarCreated"
+    std::filesystem::path video_;
     std::unique_ptr<TrayIcon> tray_;
+    // Declared after wallpaper_ on purpose: members are destroyed in reverse order, so the
+    // player (which draws into the wallpaper window) always goes first.
     std::unique_ptr<WallpaperWindow> wallpaper_;
+    std::unique_ptr<MpvPlayer> player_;
     int attach_attempts_ = 0;
 };
 

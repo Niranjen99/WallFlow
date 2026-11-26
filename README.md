@@ -4,9 +4,9 @@
 
 A lightweight live wallpaper app for Windows: it plays videos behind the desktop icons, rotates through a folder of videos with seamless switches, and pauses whenever a maximized or full-screen window (such as a game) covers the screen.
 
-**Status: work in progress.** WallFlow currently attaches a window behind the desktop icons (a solid colour for now), lives in the system tray, and re-attaches by itself when Explorer restarts. Video playback comes next. See the [Roadmap](#roadmap).
+**Status: work in progress.** WallFlow plays one video in a loop behind the desktop icons, decoded on the GPU, lives in the system tray, and recovers by itself when Explorer restarts. Pausing for games and folder rotation come next. See the [Roadmap](#roadmap).
 
-**Tech stack:** C++20, Win32 API, MSVC, CMake, GoogleTest, GitHub Actions.
+**Tech stack:** C++20, Win32 API, libmpv (FFmpeg, Direct3D 11), MSVC, CMake, GoogleTest, GitHub Actions.
 
 ## Build and run
 
@@ -21,10 +21,10 @@ cd path\to\WallFlow
 cmake --preset debug
 cmake --build --preset debug
 ctest --preset debug
-build\debug\wallflow.exe
+build\debug\wallflow.exe "C:\path	oideo.mp4"
 ```
 
-WallFlow runs in the system tray. Right-click its icon and choose **Quit WallFlow** to stop it and get your normal wallpaper back.
+The first configure downloads libmpv (about 32 MB) and checks its SHA-256. For now the video is given on the command line; without one, your normal wallpaper stays. WallFlow runs in the system tray. Right-click its icon and choose **Quit WallFlow** to stop it and get your normal wallpaper back.
 
 Presets: `debug`, `release`, and `asan` (Debug with AddressSanitizer, which CI also runs).
 
@@ -51,13 +51,26 @@ The choice is made by a pure function over a snapshot of the window tree, so bot
 
 ## Measured so far
 
-Release build, idle on the desktop (Windows 11 build 26300, 2026-11-27): 42 KB executable, 1.5 MB private memory, 0 ms of CPU time over 30 seconds.
+Windows 11 build 26300, NVIDIA RTX 3070, 1920x1080 monitor, release build (2026-11-27):
+
+| | Value |
+|---|---|
+| No video loaded | 42 KB executable, 1.5 MB private memory, 0 ms CPU over 30 s |
+| Playing a 4K H.264 video | 0.4% of total CPU (12 logical cores), GPU video decoder 14.9%, GPU 3D 2.1% |
+| Memory while playing 4K | 177 MB working set, about 345 MB private; mpv with nothing loaded: 19 MB |
+| Same video decoded on the CPU instead | 61.5% of one core and 681 MB private: why hardware decoding is on |
+
+Almost all of the memory is the decoder's pool of 4K frames (about 12 MB each). A 1080p video needs about a quarter of that.
+
+## Troubleshooting
+
+Set `WALLFLOW_MPV_LOG` to a file path before starting WallFlow and mpv writes its detailed log there (which decoder was used, whether hardware decoding worked, errors).
 
 ## Roadmap
 
 - [x] Project skeleton: CMake presets, unit tests, CI
 - [x] A window behind the desktop icons, tray icon, survives an Explorer restart
-- [ ] Play one video with hardware decoding (libmpv)
+- [x] Play one video with hardware decoding (libmpv)
 - [ ] Pause when a maximized or full-screen window covers the screen, and while locked
 - [ ] Two-player engine: loop between a start and end point with no visible gap
 - [ ] Rotate through a folder of videos with seamless switches

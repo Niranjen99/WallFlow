@@ -9,7 +9,8 @@ namespace wallflow::win {
 namespace {
 
 constexpr wchar_t kClassName[] = L"WallFlow.Wallpaper";
-constexpr COLORREF kColour = RGB(0x1E, 0x4D, 0x6B);  // placeholder until video arrives
+// Only seen if the window is revealed before the video draws over it.
+constexpr COLORREF kColour = RGB(0, 0, 0);
 
 void register_class(HINSTANCE instance) {
     WNDCLASSEXW wc{};
@@ -41,8 +42,16 @@ WallpaperWindow::WallpaperWindow(HINSTANCE instance) {
     if (hwnd_ == nullptr) {  // set by on_message during creation
         throw std::runtime_error("CreateWindowExW failed for the wallpaper window");
     }
-    // A layered window stays invisible until its opacity is set. 255 = fully opaque.
-    ::SetLayeredWindowAttributes(hwnd_, 0, 255, LWA_ALPHA);
+    // Opacity 0: a real, visible window (so the video player draws into it normally) that
+    // nobody can see yet. reveal() raises it to 255 (fully opaque).
+    ::SetLayeredWindowAttributes(hwnd_, 0, 0, LWA_ALPHA);
+}
+
+void WallpaperWindow::reveal() {
+    if (!revealed_ && hwnd_ != nullptr) {
+        ::SetLayeredWindowAttributes(hwnd_, 0, 255, LWA_ALPHA);
+        revealed_ = true;
+    }
 }
 
 WallpaperWindow::~WallpaperWindow() {
