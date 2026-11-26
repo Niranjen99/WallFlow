@@ -44,6 +44,10 @@ endif()
 add_library(wallflow_core
   src/wallflow/version.cpp
   src/wallflow/desktop_layout.cpp
+  src/wallflow/win/desktop.cpp
+  src/wallflow/win/wallpaper_window.cpp
+  src/wallflow/win/tray_icon.cpp
+  src/wallflow/win/app.cpp
 )
 target_include_directories(wallflow_core PUBLIC src)
 target_compile_definitions(wallflow_core PRIVATE WALLFLOW_VERSION="${PROJECT_VERSION}")
