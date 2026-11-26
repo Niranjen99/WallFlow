@@ -33,6 +33,10 @@ public:
     // Plays an mpv URL such as "av://lavfi:testsrc" (a generated test pattern).
     void play_url(const std::string& url);
 
+    // Pauses or resumes playback. While paused mpv decodes nothing; the last frame stays shown.
+    void set_paused(bool paused);
+    [[nodiscard]] bool paused() const;
+
     // Handles every waiting event without blocking.
     void process_events();
 

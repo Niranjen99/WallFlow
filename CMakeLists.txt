@@ -47,6 +47,8 @@ add_library(wallflow_core
   src/wallflow/version.cpp
   src/wallflow/desktop_layout.cpp
   src/wallflow/coverage.cpp
+  src/wallflow/win/log.cpp
+  src/wallflow/win/window_events.cpp
   src/wallflow/win/desktop.cpp
   src/wallflow/win/wallpaper_window.cpp
   src/wallflow/win/tray_icon.cpp
@@ -55,7 +57,8 @@ add_library(wallflow_core
 )
 target_include_directories(wallflow_core PUBLIC src)
 target_compile_definitions(wallflow_core PRIVATE WALLFLOW_VERSION="${PROJECT_VERSION}")
-target_link_libraries(wallflow_core PUBLIC wallflow_options libmpv)
+# dwmapi: DwmGetWindowAttribute (cloaked windows). wtsapi32: lock/unlock notifications.
+target_link_libraries(wallflow_core PUBLIC wallflow_options libmpv dwmapi wtsapi32)
 
 # WIN32: a GUI program (entry point wWinMain, no console window).
 add_executable(wallflow WIN32 src/main.cpp)

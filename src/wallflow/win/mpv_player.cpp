@@ -93,6 +93,18 @@ void MpvPlayer::play_url(const std::string& url) {
     mpv_command_async(mpv_.get(), 0, command);
 }
 
+void MpvPlayer::set_paused(bool paused) {
+    // mpv's "flag" format is an int (0 or 1). The async call copies the value before
+    // returning, so pointing at a local variable is fine.
+    int flag = paused ? 1 : 0;
+    mpv_set_property_async(mpv_.get(), 0, "pause", MPV_FORMAT_FLAG, &flag);
+}
+
+bool MpvPlayer::paused() const {
+    int flag = 0;
+    return mpv_get_property(mpv_.get(), "pause", MPV_FORMAT_FLAG, &flag) >= 0 && flag != 0;
+}
+
 void MpvPlayer::process_events() {
     for (;;) {
         // Timeout 0: return immediately with MPV_EVENT_NONE when nothing is waiting.

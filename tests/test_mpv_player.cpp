@@ -105,3 +105,23 @@ TEST(MpvPlayer, MissingFileReportsAnError) {
     EXPECT_EQ(player.files_loaded(), 0);
     EXPECT_FALSE(player.started());  // the window would stay hidden: normal wallpaper remains
 }
+
+TEST(MpvPlayer, PauseStopsThePosition) {
+    Pump pump;
+    MpvPlayer player(nullptr, pump.wakeup());
+    player.play_url("av://lavfi:testsrc=size=320x240:rate=30:duration=10");
+    ASSERT_TRUE(pump.run_until(player, [&] { return player.started(); }));
+
+    player.set_paused(true);
+    ASSERT_TRUE(pump.run_until(player, [&] { return player.paused(); }));
+    const auto before = player.position();
+    ASSERT_TRUE(before.has_value());
+    pump.run_until(player, [] { return false; }, 500ms);  // let half a second pass
+    EXPECT_EQ(player.position(), before) << "the position moved while paused";
+
+    player.set_paused(false);
+    EXPECT_TRUE(pump.run_until(player, [&] {
+        const auto now = player.position();
+        return now && *now > *before + 0.2;
+    })) << "the position did not move after resuming";
+}
