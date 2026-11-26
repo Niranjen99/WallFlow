@@ -40,6 +40,8 @@ if(WALLFLOW_WERROR)
   target_compile_options(wallflow_options INTERFACE /WX)
 endif()
 
+include(cmake/libmpv.cmake)
+
 # Everything except the entry point lives in this library, so the tests can link against it.
 add_library(wallflow_core
   src/wallflow/version.cpp
@@ -48,14 +50,16 @@ add_library(wallflow_core
   src/wallflow/win/wallpaper_window.cpp
   src/wallflow/win/tray_icon.cpp
   src/wallflow/win/app.cpp
+  src/wallflow/win/mpv_player.cpp
 )
 target_include_directories(wallflow_core PUBLIC src)
 target_compile_definitions(wallflow_core PRIVATE WALLFLOW_VERSION="${PROJECT_VERSION}")
-target_link_libraries(wallflow_core PUBLIC wallflow_options)
+target_link_libraries(wallflow_core PUBLIC wallflow_options libmpv)
 
 # WIN32: a GUI program (entry point wWinMain, no console window).
 add_executable(wallflow WIN32 src/main.cpp)
 target_link_libraries(wallflow PRIVATE wallflow_core)
+wallflow_copy_libmpv(wallflow)
 
 if(WALLFLOW_BUILD_TESTS)
   enable_testing()

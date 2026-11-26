@@ -17,8 +17,10 @@ FetchContent_MakeAvailable(googletest)
 add_executable(wallflow_tests
   test_version.cpp
   test_desktop_layout.cpp
+  test_mpv_player.cpp
 )
 target_link_libraries(wallflow_tests PRIVATE wallflow_core GTest::gtest_main)
+wallflow_copy_libmpv(wallflow_tests)
 
 include(GoogleTest)
 # PRE_TEST: list the tests when ctest runs, not while building.
