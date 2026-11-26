@@ -21,7 +21,7 @@ cd path\to\WallFlow
 cmake --preset debug
 cmake --build --preset debug
 ctest --preset debug
-build\debug\wallflow.exe "C:\path	oideo.mp4"
+build\debug\wallflow.exe "C:\Videos\clip.mp4"
 ```
 
 The first configure downloads libmpv (about 32 MB) and checks its SHA-256. For now the video is given on the command line; without one, your normal wallpaper stays. WallFlow runs in the system tray. Right-click its icon and choose **Quit WallFlow** to stop it and get your normal wallpaper back.
