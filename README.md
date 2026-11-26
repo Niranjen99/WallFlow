@@ -63,3 +63,7 @@ Release build, idle on the desktop (Windows 11 build 26300, 2026-11-27): 42 KB e
 - [ ] Rotate through a folder of videos with seamless switches
 - [ ] Config file, audio settings, start with Windows
 - [ ] Measured results: memory, CPU and GPU use, switch gap
+
+## License
+
+WallFlow is licensed under the [GNU General Public License v3.0](LICENSE). It uses [libmpv](https://mpv.io/), whose Windows builds include FFmpeg compiled with GPL components, so the combined program is GPLv3.
