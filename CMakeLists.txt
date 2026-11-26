@@ -43,6 +43,7 @@ endif()
 # Everything except the entry point lives in this library, so the tests can link against it.
 add_library(wallflow_core
   src/wallflow/version.cpp
+  src/wallflow/desktop_layout.cpp
 )
 target_include_directories(wallflow_core PUBLIC src)
 target_compile_definitions(wallflow_core PRIVATE WALLFLOW_VERSION="${PROJECT_VERSION}")

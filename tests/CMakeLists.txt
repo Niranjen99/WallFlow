@@ -16,6 +16,7 @@ FetchContent_MakeAvailable(googletest)
 
 add_executable(wallflow_tests
   test_version.cpp
+  test_desktop_layout.cpp
 )
 target_link_libraries(wallflow_tests PRIVATE wallflow_core GTest::gtest_main)
 
