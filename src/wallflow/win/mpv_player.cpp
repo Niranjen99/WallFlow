@@ -99,6 +99,8 @@ void MpvPlayer::load_url(const std::string& url, const LoopSetting& loop, bool p
     last_error_.reset();
     ready_ = false;
     at_end_ = false;
+    loaded_ = true;
+    duration_.reset();
     setting_ = loop;
     // The length is not known yet: check what can be checked now, the rest in on_file_loaded().
     range_ = resolve_loop(loop, std::nullopt);
@@ -136,6 +138,7 @@ void MpvPlayer::on_file_loaded() {
     if (mpv_get_property(mpv_.get(), "duration", MPV_FORMAT_DOUBLE, &duration) >= 0) {
         known = duration;
     }
+    duration_ = known;
     const LoopRange checked = resolve_loop(setting_, known);
     if (checked == range_) {
         return;
@@ -179,7 +182,7 @@ void MpvPlayer::process_events() {
                 on_file_loaded();
                 break;
             case MPV_EVENT_PLAYBACK_RESTART:
-                if (target_confirmed_) {
+                if (target_confirmed_ && loaded_) {
                     ready_ = true;
                 }
                 break;
@@ -188,7 +191,8 @@ void MpvPlayer::process_events() {
                 // mpv_wait_event call. Its data is null when the value is unavailable (no file).
                 const auto* prop = static_cast<const mpv_event_property*>(event->data);
                 if (std::string_view(prop->name) == "eof-reached") {
-                    at_end_ = prop->format == MPV_FORMAT_FLAG &&
+                    // After unload() a change queued earlier must not count.
+                    at_end_ = loaded_ && prop->format == MPV_FORMAT_FLAG &&
                               *static_cast<const int*>(prop->data) != 0;
                 }
                 break;
@@ -201,7 +205,7 @@ void MpvPlayer::process_events() {
                 break;
             }
             case MPV_EVENT_COMMAND_REPLY:
-                if (event->reply_userdata == target_id_) {
+                if (target_id_ != 0 && event->reply_userdata == target_id_) {
                     target_confirmed_ = true;
                 }
                 if (event->error < 0) {
@@ -212,6 +216,34 @@ void MpvPlayer::process_events() {
                 break;
         }
     }
+}
+
+std::optional<double> MpvPlayer::remaining() const {
+    const std::optional<double> end = range_.end ? range_.end : duration_;
+    const std::optional<double> pos = position();
+    if (!end || !pos) {
+        return std::nullopt;
+    }
+    return *end > *pos ? *end - *pos : 0.0;
+}
+
+std::optional<double> MpvPlayer::loop_length() const {
+    const std::optional<double> end = range_.end ? range_.end : duration_;
+    if (!end) {
+        return std::nullopt;
+    }
+    return *end - range_.start;
+}
+
+void MpvPlayer::unload() {
+    loaded_ = false;
+    ready_ = false;
+    at_end_ = false;
+    duration_.reset();
+    target_id_ = 0;  // replies and restarts of the old file no longer count
+    target_confirmed_ = false;
+    const char* command[] = {"stop", nullptr};
+    mpv_command_async(mpv_.get(), 0, command);
 }
 
 std::optional<double> MpvPlayer::position() const {

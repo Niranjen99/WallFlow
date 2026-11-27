@@ -71,6 +71,18 @@ public:
     // Current playback position in seconds, if a file is playing.
     [[nodiscard]] std::optional<double> position() const;
 
+    // Seconds of playback left until the end of the range, and the range's length. Known once
+    // the file is loaded (and, for a range with no end, only if mpv knows the video's length).
+    [[nodiscard]] std::optional<double> remaining() const;
+    [[nodiscard]] std::optional<double> loop_length() const;
+
+    // Unloads the file, which frees the decoder and its frames. The window keeps whatever it
+    // showed last, so only do this while it is invisible.
+    void unload();
+
+    // True from load() until unload().
+    [[nodiscard]] bool loaded() const noexcept { return loaded_; }
+
 private:
     struct Destroy {
         void operator()(mpv_handle* mpv) const noexcept;
@@ -90,6 +102,8 @@ private:
     bool at_end_ = false;
     LoopSetting setting_;  // what load() was asked for
     LoopRange range_;      // what is played
+    std::optional<double> duration_;  // the video's length, once loaded and if known
+    bool loaded_ = false;
     std::optional<std::string> last_error_;
 };
 

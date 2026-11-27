@@ -10,6 +10,8 @@ namespace wallflow {
 struct LoopSetting {
     std::optional<double> start;
     std::optional<double> end;
+
+    friend bool operator==(const LoopSetting&, const LoopSetting&) = default;
 };
 
 // The range that is actually played, after checking the setting against the video.

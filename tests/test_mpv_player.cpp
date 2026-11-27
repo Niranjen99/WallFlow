@@ -177,6 +177,41 @@ TEST(MpvPlayer, LoopEndIsCheckedAgainstTheRealLength) {
     EXPECT_NEAR(*player.position(), 4.0, 2 * kOneFrame);
 }
 
+TEST(MpvPlayer, KnowsTheTimeLeftInTheLoop) {
+    Pump pump;
+    MpvPlayer player(nullptr, pump.wakeup());
+    player.load(test_video(), {1.0, 3.0}, true);
+    ASSERT_TRUE(pump.run_until(player, [&] { return player.ready(); }));
+    ASSERT_TRUE(player.remaining().has_value());
+    EXPECT_NEAR(*player.remaining(), 2.0, kOneFrame);
+    EXPECT_NEAR(player.loop_length().value(), 2.0, 1e-9);
+
+    player.load(test_video(), {1.0, std::nullopt}, true);  // no end: up to the file's end
+    ASSERT_TRUE(pump.run_until(player, [&] { return player.ready(); }));
+    EXPECT_NEAR(player.remaining().value(), 3.0, kOneFrame);
+    EXPECT_NEAR(player.loop_length().value(), 3.0, kOneFrame);
+}
+
+TEST(MpvPlayer, UnloadsAndLoadsAgain) {
+    Pump pump;
+    MpvPlayer player(nullptr, pump.wakeup());
+    player.load(test_video(), {}, true);
+    ASSERT_TRUE(pump.run_until(player, [&] { return player.ready(); }));
+
+    player.unload();
+    EXPECT_FALSE(player.loaded());
+    EXPECT_FALSE(player.ready());
+    // Events of the old file still arrive after unload(); none may make it "ready" again.
+    pump.run_until(player, [] { return false; }, 300ms);
+    EXPECT_FALSE(player.ready());
+    EXPECT_FALSE(player.at_end());
+    EXPECT_FALSE(player.position().has_value());
+
+    player.load(test_video(), {2.0, std::nullopt}, true);
+    ASSERT_TRUE(pump.run_until(player, [&] { return player.ready(); }));
+    EXPECT_NEAR(*player.position(), 2.0, kOneFrame);
+}
+
 TEST(MpvPlayer, MissingFileReportsAnError) {
     Pump pump;
     MpvPlayer player(nullptr, pump.wakeup());

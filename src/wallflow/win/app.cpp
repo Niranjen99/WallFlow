@@ -3,6 +3,7 @@
 #include <wtsapi32.h>
 
 #include <cstring>
+#include <random>
 #include <stdexcept>
 #include <string>
 
@@ -20,6 +21,7 @@ constexpr UINT_PTR kAttachTimer = 1;
 constexpr UINT kAttachRetryMs = 500;
 constexpr int kMaxAttachAttempts = 20;  // 10 seconds
 constexpr UINT_PTR kCoverageTimer = 2;
+constexpr UINT_PTR kPreloadTimer = 3;  // the engine's "load the next video now"
 // Window events come in bursts (dragging a window sends dozens). The check runs once, this
 // long after the last event of a burst.
 constexpr UINT kCoverageDelayMs = 200;
@@ -92,7 +94,7 @@ void App::start_wallpaper() {
     ::KillTimer(hwnd_, kAttachTimer);
     // After an Explorer restart the old windows are usually already gone.
     engine_.reset();
-    engine_ = std::make_unique<VideoEngine>(instance_, hwnd_, kPlayerMessage);
+    engine_ = std::make_unique<VideoEngine>(instance_, hwnd_, kPlayerMessage, kPreloadTimer);
     engine_playing_ = false;
     attach_attempts_ = 0;
     try_attach();
@@ -120,16 +122,43 @@ void App::try_attach() {
 }
 
 void App::start_player() {
-    if (start_.video.empty() || engine_playing_) {
+    if (engine_playing_) {
+        return;
+    }
+    VideoSource first;
+    VideoEngine::NextVideo next;
+    if (!start_.folder.empty()) {
+        if (!playlist_) {
+            // A different order every run: seed the shuffle from the OS's random source.
+            playlist_ = std::make_unique<Playlist>(start_.shuffle, std::random_device{}());
+        }
+        playlist_->set_videos(scan_folder(start_.folder));
+        log(L"folder " + start_.folder.wstring() + L": " + std::to_wstring(playlist_->size()) +
+            L" videos");
+        const auto video = playlist_->next();
+        if (!video) {
+            return;  // no videos: the normal wallpaper stays
+        }
+        first.file = *video;
+        // The engine calls this when it is time for the next video. `this` outlives the
+        // engine (App owns it), and it is only called on the UI thread.
+        next = [this]() -> std::optional<VideoSource> {
+            if (const auto video = playlist_->next()) {
+                return VideoSource{*video, {}};
+            }
+            return std::nullopt;
+        };
+    } else if (!start_.video.empty()) {
+        first = {start_.video, start_.loop};
+    } else {
         return;
     }
     try {
         // If it should be paused right now (e.g. Explorer restarted while a game runs), it
         // loads paused: the first frame is shown, nothing more is decoded.
         paused_ = covered_ || locked_ || display_off_;
-        engine_->play(start_.video, start_.loop, paused_);
+        engine_->play(first, paused_, start_.interval, std::move(next));
         engine_playing_ = true;
-        log(L"loading " + start_.video.wstring());
     } catch (const std::exception& e) {
         // Keep the engine (its windows stay invisible): an Explorer restart tries again.
         log(L"player failed: " + to_wide(e.what()));
@@ -198,6 +227,10 @@ LRESULT App::on_message(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
         case WM_TIMER:
             if (wparam == kAttachTimer) {
                 try_attach();
+            } else if (wparam == kPreloadTimer) {
+                if (engine_) {
+                    engine_->on_preload_timer();
+                }
             } else if (wparam == kCoverageTimer) {
                 ::KillTimer(hwnd, kCoverageTimer);  // timers repeat; this one should fire once
                 check_coverage();

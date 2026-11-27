@@ -5,6 +5,7 @@
 #include <memory>
 
 #include "wallflow/command_line.hpp"
+#include "wallflow/playlist.hpp"
 #include "wallflow/win/tray_icon.hpp"
 #include "wallflow/win/video_engine.hpp"
 #include "wallflow/win/window_events.hpp"
@@ -52,6 +53,7 @@ private:
     std::unique_ptr<TrayIcon> tray_;
     std::unique_ptr<VideoEngine> engine_;
     bool engine_playing_ = false;  // play() was called on the current engine
+    std::unique_ptr<Playlist> playlist_;  // with --folder
     int attach_attempts_ = 0;
 
     std::unique_ptr<WindowEvents> events_;

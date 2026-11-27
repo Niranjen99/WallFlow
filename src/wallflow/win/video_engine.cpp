@@ -1,16 +1,40 @@
 #include "wallflow/win/video_engine.hpp"
 
+#include <chrono>
+#include <cmath>
 #include <string>
 
 #include "wallflow/win/log.hpp"
 
 namespace wallflow::win {
 
-VideoEngine::VideoEngine(HINSTANCE instance, HWND controller, UINT player_message)
-    : controller_(controller), player_message_(player_message) {
+namespace {
+
+// After this many videos in a row fail to load, stop trying (e.g. a folder of broken files).
+constexpr int kMaxFailures = 10;
+
+// Seconds on a steady clock (never jumps when the PC's time is changed), for Rotation.
+double now() {
+    using namespace std::chrono;
+    return duration<double>(steady_clock::now().time_since_epoch()).count();
+}
+
+std::wstring name_of(const VideoSource& video) {
+    return video.file.filename().wstring();
+}
+
+}  // namespace
+
+VideoEngine::VideoEngine(HINSTANCE instance, HWND controller, UINT player_message,
+                         UINT_PTR preload_timer)
+    : controller_(controller), player_message_(player_message), preload_timer_(preload_timer) {
     for (Slot& slot : slots_) {
         slot.window = std::make_unique<WallpaperWindow>(instance);
     }
+}
+
+VideoEngine::~VideoEngine() {
+    ::KillTimer(controller_, preload_timer_);
 }
 
 std::optional<DesktopLayout> VideoEngine::attach() {
@@ -28,7 +52,8 @@ bool VideoEngine::alive() const noexcept {
     return slots_[0].window->alive() && slots_[1].window->alive();
 }
 
-void VideoEngine::play(const std::filesystem::path& video, const LoopSetting& loop, bool paused) {
+void VideoEngine::play(const VideoSource& first, bool paused, std::optional<double> interval,
+                       NextVideo next) {
     // The wakeup runs on an mpv thread: it only posts a message, and the UI thread does the
     // work in on_player_message(). Capturing the HWND by value is safe: PostMessageW to a
     // window that no longer exists just fails.
@@ -44,15 +69,29 @@ void VideoEngine::play(const std::filesystem::path& video, const LoopSetting& lo
     }
     paused_ = paused;
     playing_ = true;
-    // Both load the same range. The waiting one stays paused on the loop start.
-    shown().player->load(video, loop, paused);
-    waiting().player->load(video, loop, true);
+    rotation_ = Rotation(next ? interval : std::nullopt);
+    next_ = std::move(next);
+    rotation_.start_video(now(), paused);
+    shown().video = first;
+    shown().player->load(first.file, first.loop, paused);
+    log(L"playing " + name_of(first));
+    // The waiting player stays empty until shortly before the loop end (arm_preload).
 }
 
 void VideoEngine::set_paused(bool paused) {
+    if (!playing_ || paused == paused_) {
+        return;
+    }
     paused_ = paused;
-    if (playing_) {
-        shown().player->set_paused(paused);
+    shown().player->set_paused(paused);
+    rotation_.set_paused(paused, now());
+    if (paused) {
+        // The timer counts wall-clock time, the loop only advances while playing: stop it and
+        // start it again with the real time left on resume.
+        ::KillTimer(controller_, preload_timer_);
+        timer_armed_ = false;
+    } else if (!waiting().video && shown().player->ready()) {
+        arm_preload();
     }
 }
 
@@ -62,21 +101,78 @@ void VideoEngine::on_player_message() {
     }
     for (Slot& slot : slots_) {
         slot.player->process_events();
-        if (const auto& error = slot.player->last_error()) {
-            log(L"playback error: " + to_wide(*error));
-        }
+    }
+    handle_errors();
+    if (gave_up_) {
+        return;
     }
 
-    Slot& on_screen = shown();
-    if (!on_screen.window->revealed() && on_screen.player->ready()) {
-        on_screen.window->reveal();
+    Slot& on = shown();
+    if (!on.window->revealed() && on.player->ready()) {
+        on.window->reveal();
         log(L"first frame ready: wallpaper revealed");
     }
-    // The shown player holds its last frame until the waiting one is ready, so a slow
-    // rewind only lengthens the last frame; it never shows black.
-    if (on_screen.player->at_end() && waiting().player->ready()) {
-        swap();
+    if (on.player->ready() && !waiting().video && !timer_armed_ && !paused_) {
+        arm_preload();
     }
+    if (on.player->at_end()) {
+        if (!waiting().video) {
+            prepare_waiting();  // the preload did not happen in time: hold the last frame
+        } else if (waiting().player->ready()) {
+            swap();
+        }
+    }
+}
+
+void VideoEngine::on_preload_timer() {
+    ::KillTimer(controller_, preload_timer_);  // Windows timers repeat; this one is one-shot
+    timer_armed_ = false;
+    if (playing_ && !gave_up_ && !waiting().video) {
+        prepare_waiting();
+    }
+}
+
+void VideoEngine::arm_preload() {
+    const std::optional<double> remaining = shown().player->remaining();
+    const std::optional<double> length = shown().player->loop_length();
+    // Unknown length (some streams), or a loop too short to unload in between: load now.
+    if (!remaining || !length || Rotation::keep_waiting_loaded(*length)) {
+        prepare_waiting();
+        return;
+    }
+    const double delay = Rotation::preload_delay(*remaining);
+    if (delay <= 0) {
+        prepare_waiting();
+        return;
+    }
+    ::SetTimer(controller_, preload_timer_, static_cast<UINT>(std::lround(delay * 1000)), nullptr);
+    timer_armed_ = true;
+}
+
+void VideoEngine::prepare_waiting() {
+    Slot& on = shown();
+    Slot& wait = waiting();
+    const double remaining = on.player->remaining().value_or(0);
+
+    // Paused time does not count towards the interval, so this decision, made a little before
+    // the loop end, is the same one that would be made at the loop end.
+    std::optional<VideoSource> target;
+    if (next_ && rotation_.switch_at_loop_end(now(), remaining)) {
+        target = next_();
+    }
+    waiting_is_switch_ = target.has_value() && *target != *on.video;  // one video: just loop
+    if (!waiting_is_switch_) {
+        target = on.video;
+    }
+
+    if (wait.video == target && wait.player->loaded()) {
+        wait.player->rewind();  // already has this loop (short loops stay loaded): just seek
+    } else {
+        wait.player->load(target->file, target->loop, true);
+    }
+    wait.video = target;
+    log(waiting_is_switch_ ? L"preloading next video: " + name_of(*target)
+                           : std::wstring(L"preloading the loop start"));
 }
 
 void VideoEngine::swap() {
@@ -88,12 +184,69 @@ void VideoEngine::swap() {
     to.player->set_paused(paused_);
     to.window->reveal();
     from.window->hide();
-    // At the end mpv paused the old player by itself; rewind leaves it paused at the start.
-    from.player->rewind();
     shown_ = 1 - shown_;
-    ++swaps_;
-    log(L"loop restart " + std::to_wstring(swaps_) + L": now on player " +
-        std::to_wstring(shown_));
+
+    if (waiting_is_switch_) {
+        rotation_.start_video(now(), paused_);
+        failures_ = 0;
+        log(L"switched to " + name_of(*to.video));
+    } else {
+        log(L"loop restart");
+    }
+    waiting_is_switch_ = false;
+
+    // The old player is now the waiting one. Free it, unless the new loop is too short for that.
+    Slot& old = waiting();
+    const std::optional<double> length = shown().player->loop_length();
+    if (!length || Rotation::keep_waiting_loaded(*length)) {
+        prepare_waiting();  // rewinds if it already holds the right loop
+    } else {
+        old.player->unload();
+        old.video.reset();
+        if (!paused_) {
+            arm_preload();
+        }
+    }
+}
+
+void VideoEngine::handle_errors() {
+    Slot& on = shown();
+    Slot& wait = waiting();
+
+    // The first video (or the one after a failed one) could not be played.
+    if (on.player->last_error() && !on.player->ready() && on.video) {
+        log(L"cannot play " + name_of(*on.video) + L": " + to_wide(*on.player->last_error()));
+        std::optional<VideoSource> next;
+        if (next_ && ++failures_ < kMaxFailures) {
+            next = next_();
+        }
+        if (next && *next != *on.video) {
+            on.video = next;
+            on.player->load(next->file, next->loop, paused_);
+            rotation_.start_video(now(), paused_);
+            log(L"playing " + name_of(*next));
+        } else {
+            on.player->unload();
+            on.video.reset();
+            gave_up_ = true;
+            log(L"nothing playable: the normal wallpaper stays");
+        }
+        return;
+    }
+
+    // The next video failed while preloading: skip it. The shown one keeps holding its last
+    // frame if the loop has already ended, so nothing visible goes wrong.
+    if (wait.video && wait.player->last_error() && !wait.player->ready()) {
+        log(L"cannot play " + name_of(*wait.video) + L", skipping it: " +
+            to_wide(*wait.player->last_error()));
+        wait.player->unload();
+        wait.video.reset();
+        if (++failures_ >= kMaxFailures) {
+            next_ = nullptr;  // stop rotating, keep looping what plays
+            log(L"too many videos failed: rotation stopped");
+        }
+        prepare_waiting();
+    }
 }
 
 }  // namespace wallflow::win
