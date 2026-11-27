@@ -8,6 +8,7 @@
 #include "wallflow/playlist.hpp"
 #include "wallflow/settings.hpp"
 #include "wallflow/win/folder_watcher.hpp"
+#include "wallflow/win/settings_window.hpp"
 #include "wallflow/win/tray_icon.hpp"
 #include "wallflow/win/video_engine.hpp"
 #include "wallflow/win/window_events.hpp"
@@ -59,6 +60,9 @@ private:
     void load_settings();
     void apply_settings(const Settings& changed);
     void edit_settings();
+    void open_settings_window();
+    // A change made in the settings window: save it to settings.json and apply it.
+    void change_settings(const Settings& changed);
     // Settings that apply whatever plays: audio, start with Windows.
     void apply_general_settings();
 
@@ -79,7 +83,9 @@ private:
     Settings settings_;
     std::filesystem::path settings_file_;
     std::unique_ptr<FolderWatcher> settings_watcher_;
+    std::unique_ptr<SettingsWindow> settings_window_;  // created the first time it is opened
     int attach_attempts_ = 0;
+    bool quitting_ = false;  // the controller window is gone: leave the message loop
 
     std::unique_ptr<WindowEvents> events_;
     HPOWERNOTIFY display_notify_ = nullptr;

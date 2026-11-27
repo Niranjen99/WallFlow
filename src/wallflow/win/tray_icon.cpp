@@ -51,7 +51,9 @@ UINT TrayIcon::show_menu() {
     if (!menu) {
         return 0;
     }
-    ::AppendMenuW(menu.get(), MF_STRING, kEditSettings, L"Edit settings...");
+    ::AppendMenuW(menu.get(), MF_STRING, kOpenSettings, L"Settings...");
+    ::SetMenuDefaultItem(menu.get(), kOpenSettings, FALSE);  // bold: what a left click does
+    ::AppendMenuW(menu.get(), MF_STRING, kEditSettings, L"Open settings file...");
     ::AppendMenuW(menu.get(), MF_SEPARATOR, 0, nullptr);
     ::AppendMenuW(menu.get(), MF_STRING, kQuit, L"Quit WallFlow");
 

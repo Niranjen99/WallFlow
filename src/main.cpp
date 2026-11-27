@@ -1,4 +1,5 @@
 #include <windows.h>
+#include <objbase.h>   // CoInitializeEx
 #include <shellapi.h>  // CommandLineToArgvW
 
 #include <exception>
@@ -54,6 +55,18 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         ::MessageBoxW(nullptr, start.error.c_str(), L"WallFlow", MB_OK | MB_ICONERROR);
         return 2;
     }
+
+    // COM, for the folder picker in the settings window. "Apartment threaded": COM objects
+    // are used only from this (the UI) thread. Undone when `com` goes out of scope, after the
+    // app is gone.
+    struct ComScope {
+        HRESULT result = ::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+        ~ComScope() {
+            if (SUCCEEDED(result)) {
+                ::CoUninitialize();
+            }
+        }
+    } com;
 
     try {
         wallflow::win::App app(instance, std::move(start));

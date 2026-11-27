@@ -1,5 +1,7 @@
 #include "wallflow/win/theme.hpp"
 
+#include <dwmapi.h>
+
 #include <cwchar>
 
 namespace wallflow::win {
@@ -62,6 +64,11 @@ bool apps_use_dark_theme() {
                    L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
                    L"AppsUseLightTheme", RRF_RT_REG_DWORD, nullptr, &light, &bytes);
     return light == 0;
+}
+
+void set_dark_title_bar(HWND window, bool dark) {
+    const BOOL value = dark ? TRUE : FALSE;
+    ::DwmSetWindowAttribute(window, DWMWA_USE_IMMERSIVE_DARK_MODE, &value, sizeof value);
 }
 
 }  // namespace wallflow::win

@@ -100,6 +100,7 @@ App::App(HINSTANCE instance, CommandLine start) : instance_(instance), start_(st
 App::~App() {
     // The controller window is a raw HWND, so it is destroyed by hand, after everything that
     // still uses it.
+    settings_window_.reset();
     engine_.reset();
     tray_.reset();
     if (hwnd_ != nullptr) {
@@ -111,7 +112,13 @@ int App::run() {
     MSG msg{};
     // GetMessage waits without using CPU until a message arrives. It returns 0 for WM_QUIT
     // and -1 on error.
-    while (::GetMessageW(&msg, nullptr, 0, 0) > 0) {
+    // quitting_ as well as WM_QUIT: if Quit happens while another message loop runs (the folder
+    // picker's), that loop can swallow WM_QUIT, and this one would then wait forever.
+    while (!quitting_ && ::GetMessageW(&msg, nullptr, 0, 0) > 0) {
+        // Keyboard navigation in the settings window (Tab, Enter, Esc) happens here.
+        if (settings_window_ && settings_window_->handle_dialog_message(msg)) {
+            continue;
+        }
         ::TranslateMessage(&msg);
         ::DispatchMessageW(&msg);
     }
@@ -186,7 +193,7 @@ std::optional<VideoSource> App::open_folder() {
         }
     }
     if (dir.empty()) {
-        log(L"no video folder set: choose one in settings.json (tray menu > Edit settings)");
+        log(L"no video folder set: choose one in the settings (click the tray icon)");
         return std::nullopt;
     }
     playlist_->set_videos(scan_folder(dir));
@@ -240,6 +247,9 @@ void App::start_player() {
 }
 
 void App::rescan_folder() {
+    if (settings_window_) {
+        settings_window_->videos_changed();
+    }
     if (!playlist_ || folder().empty()) {
         return;
     }
@@ -285,6 +295,9 @@ void App::apply_settings(const Settings& changed) {
         return;  // e.g. the file was saved without changes
     }
     log(L"settings changed");
+    if (settings_window_) {
+        settings_window_->update(settings_);  // e.g. settings.json edited by hand
+    }
     if (command_line_decides() || !engine_) {
         return;  // the command line decides what plays
     }
@@ -329,6 +342,24 @@ void App::apply_general_settings() {
     }
 }
 
+void App::open_settings_window() {
+    if (!settings_window_) {
+        settings_window_ = std::make_unique<SettingsWindow>(
+            instance_, [this](const Settings& changed) { change_settings(changed); },
+            [this] { edit_settings(); });
+    }
+    settings_window_->show(settings_);
+}
+
+void App::change_settings(const Settings& changed) {
+    // Saved first, then applied. The folder watcher then reports our own write; reading it
+    // back finds nothing new, so nothing happens twice.
+    if (!settings_file_.empty() && !write_text_file(settings_file_, settings_to_json(changed))) {
+        log(L"could not save the settings file");
+    }
+    apply_settings(changed);
+}
+
 void App::edit_settings() {
     // Notepad is on every Windows PC; a .json file may have no "open" program at all.
     // ShellExecuteW returns a value greater than 32 on success (a 16-bit Windows convention).
@@ -364,6 +395,11 @@ void App::quit() {
     ::KillTimer(hwnd_, kAttachTimer);
     ::KillTimer(hwnd_, kFolderTimer);
     ::KillTimer(hwnd_, kSettingsTimer);
+    if (settings_window_) {
+        // Not destroyed here: we may be running inside its folder picker right now (Quit
+        // chosen from the tray while the picker is open). Only the picker is told to close.
+        settings_window_->cancel_folder_picker();
+    }
     folder_watcher_.reset();  // stops its thread
     settings_watcher_.reset();
     events_.reset();
@@ -392,8 +428,13 @@ LRESULT App::on_message(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
             break;
 
         case kTrayMessage:
-            if (LOWORD(lparam) == WM_RBUTTONUP) {
+            if (LOWORD(lparam) == WM_LBUTTONUP) {
+                open_settings_window();
+            } else if (LOWORD(lparam) == WM_RBUTTONUP) {
                 switch (tray_->show_menu()) {
+                    case TrayIcon::kOpenSettings:
+                        open_settings_window();
+                        break;
                     case TrayIcon::kEditSettings:
                         edit_settings();
                         break;
@@ -486,6 +527,7 @@ LRESULT App::on_message(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
             return 0;
 
         case WM_DESTROY:
+            quitting_ = true;
             ::PostQuitMessage(0);
             return 0;
 

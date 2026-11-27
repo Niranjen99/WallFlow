@@ -25,6 +25,7 @@ add_executable(wallflow_tests
   test_rotation.cpp
   test_folder_watcher.cpp
   test_settings.cpp
+  test_settings_form.cpp
   test_settings_file.cpp
   test_autostart.cpp
   test_mpv_player.cpp

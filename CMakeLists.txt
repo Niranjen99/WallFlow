@@ -61,6 +61,7 @@ add_library(wallflow_core
   src/wallflow/playlist.cpp
   src/wallflow/rotation.cpp
   src/wallflow/settings.cpp
+  src/wallflow/settings_form.cpp
   src/wallflow/win/log.cpp
   src/wallflow/win/window_events.cpp
   src/wallflow/win/desktop.cpp
@@ -73,11 +74,12 @@ add_library(wallflow_core
   src/wallflow/win/settings_file.cpp
   src/wallflow/win/autostart.cpp
   src/wallflow/win/theme.cpp
+  src/wallflow/win/settings_window.cpp
 )
 target_include_directories(wallflow_core PUBLIC src)
 target_compile_definitions(wallflow_core PRIVATE WALLFLOW_VERSION="${PROJECT_VERSION}")
 # dwmapi: DwmGetWindowAttribute (cloaked windows). wtsapi32: lock/unlock notifications.
-target_link_libraries(wallflow_core PUBLIC wallflow_options libmpv dwmapi wtsapi32 shell32 ole32 advapi32)
+target_link_libraries(wallflow_core PUBLIC wallflow_options libmpv dwmapi wtsapi32 shell32 ole32 advapi32 comctl32 uxtheme)
 target_link_libraries(wallflow_core PRIVATE nlohmann_json::nlohmann_json)
 
 # The exe's resources: icon and version info. configure_file fills in the version and the

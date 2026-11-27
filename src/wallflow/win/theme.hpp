@@ -26,4 +26,8 @@ bool is_theme_change(LPARAM lparam);
 // True if Windows is set to dark mode for apps (Settings > Personalization > Colors).
 bool apps_use_dark_theme();
 
+// Dark or light title bar for `window` (documented: DWMWA_USE_IMMERSIVE_DARK_MODE, Windows 11
+// and Windows 10 20H1+). Windows does not do this by itself for Win32 windows.
+void set_dark_title_bar(HWND window, bool dark);
+
 }  // namespace wallflow::win
