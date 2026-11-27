@@ -6,6 +6,7 @@
 #include <wrl/client.h>  // Microsoft::WRL::ComPtr
 
 #include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -55,7 +56,6 @@ enum ControlId : int {
     kWholeVideo,
     kCompatible,
     kPreview,
-    kOpenFile,
     kApply,
     kClose,
 };
@@ -126,12 +126,12 @@ HICON load_app_icon(int size) {
 
 }  // namespace
 
-SettingsWindow::SettingsWindow(HINSTANCE instance, ChangeHandler on_change, Action open_file,
-                               PreviewHandler on_preview, Action on_closed)
+SettingsWindow::SettingsWindow(HINSTANCE instance, ChangeHandler on_change,
+                               PreviewHandler on_preview, AudioHandler on_audio, Action on_closed)
     : instance_(instance),
       on_change_(std::move(on_change)),
-      open_file_(std::move(open_file)),
       on_preview_(std::move(on_preview)),
+      on_audio_(std::move(on_audio)),
       on_closed_(std::move(on_closed)) {
     // The list view and the slider live in comctl32; this registers their window classes.
     INITCOMMONCONTROLSEX controls{sizeof controls, ICC_LISTVIEW_CLASSES | ICC_BAR_CLASSES | ICC_TAB_CLASSES};
@@ -324,6 +324,7 @@ void SettingsWindow::create_controls() {
     // The header (column titles) belongs to the list, and so do its notifications; this
     // "subclass" lets us see them (to colour the header text in dark mode).
     ::SetWindowSubclass(list_, &SettingsWindow::list_proc, 1, reinterpret_cast<DWORD_PTR>(this));
+    ::SetWindowSubclass(volume_, &SettingsWindow::slider_proc, 1, reinterpret_cast<DWORD_PTR>(this));
 
     loop_start_label_ = add(WC_STATICW, L"Loop start", label);
     loop_start_ = add(WC_EDITW, L"", field, kLoopStart, WS_EX_CLIENTEDGE);
@@ -336,7 +337,6 @@ void SettingsWindow::create_controls() {
                      L"Pick a video, then type its loop start and end in seconds (2, 4.5) or as 1:30.",
                      label);
     status_ = add(WC_STATICW, L"", label);
-    open_file_button_ = add(WC_BUTTONW, L"Open settings file", BS_PUSHBUTTON | WS_TABSTOP, kOpenFile);
     version_ = add(WC_STATICW, (L"Version " + std::wstring(version())).c_str(), label);
     apply_ = add(WC_BUTTONW, L"Apply", BS_PUSHBUTTON | WS_TABSTOP, kApply);
     close_ = add(WC_BUTTONW, L"Close", BS_PUSHBUTTON | WS_TABSTOP, kClose);
@@ -413,8 +413,7 @@ void SettingsWindow::layout() {
     place(loop_hint_, m, 524, right - m, 22);
 
     place(status_, m, 554, right - m, 22);
-    place(open_file_button_, m, 592, 150, 30);
-    place(version_, m + 162, 597, 120, 22);
+    place(version_, m, 597, 160, 22);
     place(apply_, right - 96 - 10 - 96, 592, 96, 30);
     place(close_, right - 96, 592, 96, 30);
 
@@ -452,7 +451,7 @@ void SettingsWindow::apply_theme() {
     // Theme classes with a "DarkMode_" prefix are the dark versions of the standard ones,
     // the same ones File Explorer uses. nullptr = back to the control's normal theme.
     const wchar_t* button_theme = dark_ ? L"DarkMode_Explorer" : nullptr;
-    for (HWND button : {browse_, whole_video_, preview_, open_file_button_, apply_, close_}) {
+    for (HWND button : {browse_, whole_video_, preview_, apply_, close_}) {
         ::SetWindowTheme(button, button_theme, nullptr);
     }
     for (HWND edit : {folder_, interval_, loop_start_, loop_end_}) {
@@ -642,9 +641,6 @@ void SettingsWindow::on_command(int id, int code) {
         case kPreview:
             preview();
             break;
-        case kOpenFile:
-            open_file_();
-            break;
         case IDOK:  // Enter (sent by IsDialogMessage)
         case kApply:
             apply();
@@ -668,6 +664,9 @@ void SettingsWindow::toggle(int id) {
         case kMute:
             settings_.mute = !settings_.mute;
             ::EnableWindow(volume_, !settings_.mute);
+            if (on_audio_) {
+                on_audio_(settings_.mute, settings_.volume);  // hear it now
+            }
             status = settings_.mute ? L"Muted (the audio is not even decoded)." : L"Sound on.";
             break;
         case kStartWithWindows:
@@ -905,6 +904,52 @@ LRESULT CALLBACK SettingsWindow::list_proc(HWND hwnd, UINT msg, WPARAM wparam, L
     return ::DefSubclassProc(hwnd, msg, wparam, lparam);
 }
 
+LRESULT CALLBACK SettingsWindow::slider_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam,
+                                             UINT_PTR, DWORD_PTR self_data) {
+    auto* self = reinterpret_cast<SettingsWindow*>(self_data);
+    if (msg == WM_LBUTTONDOWN) {
+        // A standard slider moves one page (10) towards a click on its track. Like Windows 11's
+        // sliders, jump to the clicked point instead. The knob is then under the mouse, so the
+        // default handling below starts a drag from there.
+        RECT channel{};
+        RECT thumb{};
+        ::SendMessageW(hwnd, TBM_GETCHANNELRECT, 0, reinterpret_cast<LPARAM>(&channel));
+        ::SendMessageW(hwnd, TBM_GETTHUMBRECT, 0, reinterpret_cast<LPARAM>(&thumb));
+        const POINT click{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+        if (::PtInRect(&thumb, click) == FALSE) {
+            // The knob's centre travels from channel.left + half a knob to channel.right - half.
+            const int half = (thumb.right - thumb.left) / 2;
+            const int from = channel.left + half;
+            const int span = std::max(1, static_cast<int>(channel.right - channel.left) - 2 * half);
+            const auto low = static_cast<int>(::SendMessageW(hwnd, TBM_GETRANGEMIN, 0, 0));
+            const auto high = static_cast<int>(::SendMessageW(hwnd, TBM_GETRANGEMAX, 0, 0));
+            const int clamped = std::clamp(static_cast<int>(click.x) - from, 0, span);
+            const int position = low + static_cast<int>(std::lround(
+                                           static_cast<double>(clamped) * (high - low) / span));
+            ::SendMessageW(hwnd, TBM_SETPOS, TRUE, position);
+            self->volume_moved();
+        }
+    } else if (msg == WM_NCDESTROY) {
+        ::RemoveWindowSubclass(hwnd, &SettingsWindow::slider_proc, 1);
+    }
+    return ::DefSubclassProc(hwnd, msg, wparam, lparam);
+}
+
+void SettingsWindow::volume_moved() {
+    // The slider itself repaints only where the knob was and is; our track is coloured up to
+    // the knob, so the whole control must be repainted or the old colour stays behind.
+    ::InvalidateRect(volume_, nullptr, FALSE);
+    const auto volume = static_cast<int>(::SendMessageW(volume_, TBM_GETPOS, 0, 0));
+    if (volume != settings_.volume) {
+        settings_.volume = volume;
+        ::SetWindowTextW(volume_value_, std::to_wstring(volume).c_str());
+        if (on_audio_) {
+            on_audio_(settings_.mute, settings_.volume);  // hear it now
+        }
+        changed(L"Volume " + std::to_wstring(volume) + L". Click Apply to keep it.");
+    }
+}
+
 // ---- Messages ---------------------------------------------------------------------------
 
 LRESULT SettingsWindow::on_message(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
@@ -981,12 +1026,7 @@ LRESULT SettingsWindow::on_message(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lp
 
         case WM_HSCROLL:
             if (reinterpret_cast<HWND>(lparam) == volume_) {
-                const auto volume = static_cast<int>(::SendMessageW(volume_, TBM_GETPOS, 0, 0));
-                if (volume != settings_.volume) {
-                    settings_.volume = volume;
-                    ::SetWindowTextW(volume_value_, std::to_wstring(volume).c_str());
-                    changed(L"Volume " + std::to_wstring(volume) + L".");
-                }
+                volume_moved();
             }
             return 0;
 

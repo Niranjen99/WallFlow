@@ -59,7 +59,6 @@ private:
     // settings.json: read it (creating it with defaults the first time) and apply changes.
     void load_settings();
     void apply_settings(const Settings& changed);
-    void edit_settings();
     void open_settings_window();
     // A change made in the settings window: save it to settings.json and apply it.
     void change_settings(const Settings& changed);
@@ -67,6 +66,9 @@ private:
     // rotation, until end_preview() (Apply, or the window closes) brings back what was playing.
     void preview(const VideoSource& video);
     void end_preview();
+    // The settings window closed: end a preview, and go back to the applied audio (the window
+    // plays mute/volume changes at once, before they are applied).
+    void settings_window_closed();
     // Settings that apply whatever plays: audio, start with Windows.
     void apply_general_settings();
 

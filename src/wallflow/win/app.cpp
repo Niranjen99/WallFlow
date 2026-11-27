@@ -347,11 +347,15 @@ void App::open_settings_window() {
     if (!settings_window_) {
         settings_window_ = std::make_unique<SettingsWindow>(
             instance_, [this](const Settings& changed) { change_settings(changed); },
-            [this] { edit_settings(); },
             [this](const std::filesystem::path& file, const LoopSetting& loop, bool compatible) {
                 preview({file, loop, compatible});
             },
-            [this] { end_preview(); });
+            [this](bool muted, int volume) {
+                if (engine_) {
+                    engine_->set_audio(muted, volume);
+                }
+            },
+            [this] { settings_window_closed(); });
     }
     settings_window_->show(settings_);
 }
@@ -372,6 +376,13 @@ void App::preview(const VideoSource& video) {
     previewing_ = true;
     engine_->set_rotation(std::nullopt, {});  // stay on the preview: no switching
     engine_->switch_now(video);
+}
+
+void App::settings_window_closed() {
+    end_preview();
+    if (engine_) {
+        engine_->set_audio(settings_.mute, settings_.volume);  // what is applied
+    }
 }
 
 void App::end_preview() {
@@ -412,17 +423,6 @@ void App::change_settings(const Settings& changed) {
         log(L"could not save the settings file");
     }
     apply_settings(changed);
-}
-
-void App::edit_settings() {
-    // Notepad is on every Windows PC; a .json file may have no "open" program at all.
-    // ShellExecuteW returns a value greater than 32 on success (a 16-bit Windows convention).
-    const std::wstring args = L"\"" + settings_file_.wstring() + L"\"";
-    const auto result = reinterpret_cast<INT_PTR>(
-        ::ShellExecuteW(nullptr, L"open", L"notepad.exe", args.c_str(), nullptr, SW_SHOWNORMAL));
-    if (result <= 32) {
-        log(L"could not open notepad");
-    }
 }
 
 void App::check_coverage() {
@@ -488,9 +488,6 @@ LRESULT App::on_message(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
                 switch (tray_->show_menu()) {
                     case TrayIcon::kOpenSettings:
                         open_settings_window();
-                        break;
-                    case TrayIcon::kEditSettings:
-                        edit_settings();
                         break;
                     case TrayIcon::kQuit:
                         quit();

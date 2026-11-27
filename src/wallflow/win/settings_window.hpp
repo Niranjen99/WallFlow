@@ -39,11 +39,13 @@ public:
     using Action = std::function<void()>;
     using PreviewHandler =
         std::function<void(const std::filesystem::path& file, const LoopSetting& loop, bool compatible)>;
+    using AudioHandler = std::function<void(bool muted, int volume)>;
 
-    // on_preview: show a video on the desktop now (not applied); on_closed: the window closed
-    // (a preview should end).
-    SettingsWindow(HINSTANCE instance, ChangeHandler on_change, Action open_file,
-                   PreviewHandler on_preview, Action on_closed);
+    // on_preview: show a video on the desktop now (not applied); on_audio: mute/volume moved
+    // (heard at once, not applied); on_closed: the window closed (end a preview, undo
+    // audio that was not applied).
+    SettingsWindow(HINSTANCE instance, ChangeHandler on_change,
+                   PreviewHandler on_preview, AudioHandler on_audio, Action on_closed);
     ~SettingsWindow();
 
     SettingsWindow(const SettingsWindow&) = delete;
@@ -67,6 +69,10 @@ private:
     LRESULT on_message(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
     static LRESULT CALLBACK list_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam,
                                       UINT_PTR id, DWORD_PTR self);
+    static LRESULT CALLBACK slider_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam,
+                                        UINT_PTR id, DWORD_PTR self);
+    // The slider moved (any way): show the number, repaint, play it at once.
+    void volume_moved();
 
     struct Palette {
         COLORREF background, text, secondary, field, track, accent, knob, error;
@@ -101,8 +107,8 @@ private:
 
     HINSTANCE instance_;
     ChangeHandler on_change_;
-    Action open_file_;
     PreviewHandler on_preview_;
+    AudioHandler on_audio_;
     Action on_closed_;
     Settings settings_;  // shown in the window, with edits not applied yet
     Settings applied_;   // what WallFlow uses now
@@ -131,7 +137,7 @@ private:
     HWND loop_start_label_ = nullptr, loop_start_ = nullptr, loop_end_label_ = nullptr;
     HWND loop_end_ = nullptr, whole_video_ = nullptr, loop_hint_ = nullptr;
     HWND compatible_ = nullptr, preview_ = nullptr;
-    HWND status_ = nullptr, open_file_button_ = nullptr, apply_ = nullptr, close_ = nullptr;
+    HWND status_ = nullptr, apply_ = nullptr, close_ = nullptr;
     HWND version_ = nullptr;
     HWND tooltip_ = nullptr;
 };
