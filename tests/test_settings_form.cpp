@@ -13,6 +13,13 @@ TEST(SettingsForm, TimeTextMatchesTheSettingsFile) {
     EXPECT_EQ(wallflow::time_text(std::optional<double>{}), L"");
 }
 
+TEST(SettingsForm, SecondsTextIsAPlainNumber) {
+    EXPECT_EQ(wallflow::seconds_text(300), L"300");
+    EXPECT_EQ(wallflow::seconds_text(2.5), L"2.5");
+    EXPECT_EQ(wallflow::seconds_text(10.005), L"10.005");
+    EXPECT_EQ(wallflow::seconds_text(0), L"0");
+}
+
 TEST(SettingsForm, IntervalAcceptsTimesAndTrimsSpaces) {
     EXPECT_EQ(read_interval(L"5:00").seconds, 300);
     EXPECT_EQ(read_interval(L"  90 ").seconds, 90);
@@ -23,9 +30,9 @@ TEST(SettingsForm, IntervalExplainsWhatIsWrong) {
     EXPECT_FALSE(read_interval(L"").seconds);
     EXPECT_FALSE(read_interval(L"").error.empty());
     EXPECT_FALSE(read_interval(L"five").seconds);
-    EXPECT_NE(read_interval(L"five").error.find(L"Not a time"), std::wstring::npos);
+    EXPECT_NE(read_interval(L"five").error.find(L"Not a number"), std::wstring::npos);
     EXPECT_FALSE(read_interval(L"0:05").seconds);  // under the 10 s minimum
-    EXPECT_NE(read_interval(L"0:05").error.find(L"0:10"), std::wstring::npos);
+    EXPECT_NE(read_interval(L"0:05").error.find(L"10 seconds"), std::wstring::npos);
 }
 
 TEST(SettingsForm, LoopFieldsMayBeEmpty) {

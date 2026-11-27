@@ -34,6 +34,7 @@ enum ControlId : int {
     kLoopEnd,
     kWholeVideo,
     kOpenFile,
+    kApply,
     kClose,
 };
 
@@ -131,7 +132,10 @@ SettingsWindow::~SettingsWindow() {
 }
 
 void SettingsWindow::show(const Settings& settings) {
-    settings_ = settings;
+    if (hwnd_ == nullptr || settings_ == applied_) {
+        settings_ = settings;  // (an open window with unapplied edits keeps them)
+    }
+    applied_ = settings;
     if (hwnd_ == nullptr) {
         create_window();
         ::ShowWindow(hwnd_, SW_SHOW);
@@ -145,8 +149,19 @@ void SettingsWindow::show(const Settings& settings) {
 }
 
 void SettingsWindow::update(const Settings& settings) {
-    if (settings == settings_) {
-        return;  // our own change coming back from the app
+    if (settings == applied_) {
+        return;  // our own Apply coming back from the app
+    }
+    const bool pending = settings_ != applied_;
+    applied_ = settings;
+    if (pending) {
+        // settings.json was edited by hand while the window has unapplied edits: keep the
+        // edits (Apply would overwrite the file), but say so.
+        if (hwnd_ != nullptr) {
+            set_status(L"settings.json changed meanwhile. Apply will replace it with what you see here.", true);
+            update_apply_button();
+        }
+        return;
     }
     settings_ = settings;
     if (hwnd_ != nullptr) {
@@ -210,7 +225,7 @@ void SettingsWindow::create_window() {
     layout();
     apply_theme();  // before the window is first shown, so it never flashes white in dark mode
     fill_from_settings();
-    set_status(L"Changes are saved and applied right away.", false);
+    set_status(L"Change what you like, then click Apply.", false);
 }
 
 void SettingsWindow::create_fonts() {
@@ -246,7 +261,7 @@ void SettingsWindow::create_controls() {
     browse_ = add(WC_BUTTONW, L"Browse...", BS_PUSHBUTTON | WS_TABSTOP, kBrowse);
     interval_label_ = add(WC_STATICW, L"Play each video for", label);
     interval_ = add(WC_EDITW, L"", field, kInterval, WS_EX_CLIENTEDGE);
-    interval_hint_ = add(WC_STATICW, L"minutes:seconds, at least 0:10", label);
+    interval_hint_ = add(WC_STATICW, L"seconds (at least 10)", label);
     shuffle_ = add(WC_BUTTONW, L"Shuffle (random order, each video once per round)", toggle, kShuffle);
     mute_ = add(WC_BUTTONW, L"Mute", toggle, kMute);
     volume_label_ = add(WC_STATICW, L"Volume", label);
@@ -277,10 +292,11 @@ void SettingsWindow::create_controls() {
     loop_end_ = add(WC_EDITW, L"", field, kLoopEnd, WS_EX_CLIENTEDGE);
     whole_video_ = add(WC_BUTTONW, L"Whole video", BS_PUSHBUTTON | WS_TABSTOP, kWholeVideo);
     loop_hint_ = add(WC_STATICW,
-                     L"Pick a video, then type when its loop starts and ends (for example 0:02 and 0:05).",
+                     L"Pick a video, then type its loop start and end in seconds (2, 4.5) or as 1:30.",
                      label);
     status_ = add(WC_STATICW, L"", label);
     open_file_button_ = add(WC_BUTTONW, L"Open settings file", BS_PUSHBUTTON | WS_TABSTOP, kOpenFile);
+    apply_ = add(WC_BUTTONW, L"Apply", BS_PUSHBUTTON | WS_TABSTOP, kApply);
     close_ = add(WC_BUTTONW, L"Close", BS_PUSHBUTTON | WS_TABSTOP, kClose);
 
     for (HWND heading : {folder_heading_, videos_heading_}) {
@@ -344,7 +360,8 @@ void SettingsWindow::layout() {
     place(loop_hint_, m, 490, right - m, 22);
 
     place(status_, m, 522, right - m, 22);
-    place(open_file_button_, right - 96 - 10 - 150, 560, 150, 30);
+    place(open_file_button_, m, 560, 150, 30);
+    place(apply_, right - 96 - 10 - 96, 560, 96, 30);
     place(close_, right - 96, 560, 96, 30);
 
     // Columns: the loop columns fixed, the name takes what is left (minus a scrollbar).
@@ -378,7 +395,7 @@ void SettingsWindow::apply_theme() {
     // Theme classes with a "DarkMode_" prefix are the dark versions of the standard ones,
     // the same ones File Explorer uses. nullptr = back to the control's normal theme.
     const wchar_t* button_theme = dark_ ? L"DarkMode_Explorer" : nullptr;
-    for (HWND button : {browse_, whole_video_, open_file_button_, close_}) {
+    for (HWND button : {browse_, whole_video_, open_file_button_, apply_, close_}) {
         ::SetWindowTheme(button, button_theme, nullptr);
     }
     for (HWND edit : {folder_, interval_, loop_start_, loop_end_}) {
@@ -400,7 +417,7 @@ void SettingsWindow::apply_theme() {
 
 void SettingsWindow::fill_from_settings() {
     ::SetWindowTextW(folder_, settings_.folder.empty() ? L"(none chosen)" : settings_.folder.c_str());
-    ::SetWindowTextW(interval_, time_text(settings_.interval).c_str());
+    ::SetWindowTextW(interval_, seconds_text(settings_.interval).c_str());
     ::SendMessageW(volume_, TBM_SETPOS, TRUE, settings_.volume);
     ::SetWindowTextW(volume_value_, std::to_wstring(settings_.volume).c_str());
     ::EnableWindow(volume_, !settings_.mute);
@@ -408,6 +425,11 @@ void SettingsWindow::fill_from_settings() {
         ::InvalidateRect(toggle, nullptr, FALSE);
     }
     fill_video_list();
+    update_apply_button();
+}
+
+void SettingsWindow::update_apply_button() {
+    ::EnableWindow(apply_, settings_ != applied_);
 }
 
 void SettingsWindow::fill_video_list() {
@@ -489,8 +511,41 @@ bool SettingsWindow::toggle_on(int id) const {
 // ---- Changing the settings --------------------------------------------------------------
 
 void SettingsWindow::changed(const std::wstring& status) {
+    update_apply_button();
+    set_status(settings_ == applied_ ? std::wstring() : status + L" Click Apply to use it.", false);
+}
+
+bool SettingsWindow::apply() {
+    // Fields that were typed in but not left yet count too.
+    if (!commit_interval() || !commit_loop()) {
+        return false;  // the red message says what is wrong; nothing is applied
+    }
+    if (settings_ == applied_) {
+        set_status(L"Nothing to apply.", false);
+        update_apply_button();
+        return true;
+    }
+    applied_ = settings_;
     on_change_(settings_);
-    set_status(status, false);
+    update_apply_button();
+    set_status(L"Applied.", false);
+    return true;
+}
+
+void SettingsWindow::close_asking() {
+    // Also catches text typed into a field that was not left yet.
+    const bool fields_ok = commit_interval() && commit_loop();
+    if (!fields_ok || settings_ != applied_) {
+        const int answer = ::MessageBoxW(hwnd_, L"Apply your changes before closing?", L"WallFlow settings",
+                                         MB_YESNOCANCEL | MB_ICONQUESTION);
+        if (answer == IDCANCEL || (answer == IDYES && !apply())) {
+            return;  // stay open (after a failed Apply the red message says why)
+        }
+        if (answer == IDNO) {
+            settings_ = applied_;  // discard
+        }
+    }
+    ::DestroyWindow(hwnd_);
 }
 
 void SettingsWindow::on_command(int id, int code) {
@@ -523,16 +578,13 @@ void SettingsWindow::on_command(int id, int code) {
         case kOpenFile:
             open_file_();
             break;
-        case IDOK:  // Enter (sent by IsDialogMessage): apply the field being typed in
-            if (::GetFocus() == interval_) {
-                commit_interval();
-            } else if (::GetFocus() == loop_start_ || ::GetFocus() == loop_end_) {
-                commit_loop();
-            }
+        case IDOK:  // Enter (sent by IsDialogMessage)
+        case kApply:
+            apply();
             break;
         case IDCANCEL:  // Esc
         case kClose:
-            ::SendMessageW(hwnd_, WM_CLOSE, 0, 0);
+            close_asking();
             break;
         default:
             break;
@@ -549,7 +601,7 @@ void SettingsWindow::toggle(int id) {
         case kMute:
             settings_.mute = !settings_.mute;
             ::EnableWindow(volume_, !settings_.mute);
-            status = settings_.mute ? L"Muted: the audio is not even decoded." : L"Sound on.";
+            status = settings_.mute ? L"Muted (the audio is not even decoded)." : L"Sound on.";
             break;
         case kStartWithWindows:
             settings_.start_with_windows = !settings_.start_with_windows;
@@ -563,28 +615,29 @@ void SettingsWindow::toggle(int id) {
     changed(status);
 }
 
-void SettingsWindow::commit_interval() {
+bool SettingsWindow::commit_interval() {
     const IntervalField field = read_interval(text_of(interval_));
     if (!field.seconds) {
         set_status(field.error, true);
-        return;
+        return false;
     }
-    ::SetWindowTextW(interval_, time_text(*field.seconds).c_str());  // "90" -> "1:30"
+    ::SetWindowTextW(interval_, seconds_text(*field.seconds).c_str());  // "5:00" -> "300"
     if (*field.seconds != settings_.interval) {
         settings_.interval = *field.seconds;
-        changed(L"Each video now plays for " + time_text(*field.seconds) + L".");
+        changed(L"Each video plays for " + seconds_text(*field.seconds) + L" seconds.");
     }
+    return true;
 }
 
-void SettingsWindow::commit_loop() {
+bool SettingsWindow::commit_loop() {
     const int row = selected_row();
     if (row < 0) {
-        return;
+        return true;
     }
     const LoopFields fields = read_loop(text_of(loop_start_), text_of(loop_end_));
     if (!fields.loop) {
         set_status(fields.error, true);
-        return;
+        return false;
     }
     Settings next = settings_;
     set_loop(next, rows_[row].name, *fields.loop);
@@ -595,15 +648,16 @@ void SettingsWindow::commit_loop() {
         if (status_error_) {
             set_status(L"", false);  // the mistake was fixed by typing the old value again
         }
-        return;
+        return true;
     }
     settings_ = std::move(next);
     rows_[row].start = time_text(fields.loop->start);
     rows_[row].end = time_text(fields.loop->end);
     ListView_SetItemText(list_, row, 1, rows_[row].start.data());
     ListView_SetItemText(list_, row, 2, rows_[row].end.data());
-    changed(fields.loop->start || fields.loop->end ? L"Loop saved for " + rows_[row].name + L"."
-                                                    : L"" + rows_[row].name + L" loops as a whole again.");
+    changed(fields.loop->start || fields.loop->end ? L"New loop for " + rows_[row].name + L"."
+                                                    : rows_[row].name + L" loops as a whole.");
+    return true;
 }
 
 void SettingsWindow::clear_loop() {
@@ -626,7 +680,7 @@ void SettingsWindow::browse_folder() {
     settings_.folder = *folder;
     ::SetWindowTextW(folder_, settings_.folder.c_str());
     fill_video_list();
-    changed(L"Playing videos from the new folder.");
+    changed(L"New folder.");
 }
 
 // ---- Painting ---------------------------------------------------------------------------
@@ -822,7 +876,6 @@ LRESULT SettingsWindow::on_message(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lp
 
         case WM_HSCROLL:
             if (reinterpret_cast<HWND>(lparam) == volume_) {
-                // Applied while dragging, so you hear the change.
                 const auto volume = static_cast<int>(::SendMessageW(volume_, TBM_GETPOS, 0, 0));
                 if (volume != settings_.volume) {
                     settings_.volume = volume;
@@ -854,8 +907,8 @@ LRESULT SettingsWindow::on_message(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lp
             return 0;
         }
 
-        case WM_CLOSE:
-            ::DestroyWindow(hwnd);
+        case WM_CLOSE:  // the title bar's X
+            close_asking();
             return 0;
 
         case WM_NCDESTROY:

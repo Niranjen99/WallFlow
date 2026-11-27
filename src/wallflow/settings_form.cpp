@@ -1,5 +1,6 @@
 #include "wallflow/settings_form.hpp"
 
+#include <cmath>
 #include <cwctype>
 #include <iterator>
 
@@ -31,7 +32,7 @@ bool same_name(std::wstring_view a, std::wstring_view b) {
     return true;
 }
 
-constexpr wchar_t kTimeHelp[] = L"Use seconds (90) or minutes:seconds (1:30).";
+constexpr wchar_t kTimeHelp[] = L"Use seconds (90 or 4.5) or minutes:seconds (1:30).";
 
 }  // namespace
 
@@ -44,17 +45,31 @@ std::wstring time_text(std::optional<double> seconds) {
     return seconds ? time_text(*seconds) : std::wstring();
 }
 
+std::wstring seconds_text(double seconds) {
+    // Whole milliseconds, then trailing zeros dropped: 2.5 -> "2.5", 300 -> "300".
+    const auto ms = static_cast<long long>(std::llround(seconds * 1000));
+    std::wstring text = std::to_wstring(ms / 1000);
+    if (ms % 1000 != 0) {
+        std::wstring fraction = std::to_wstring(1000 + ms % 1000).substr(1);  // 5 -> "005"
+        while (fraction.back() == L'0') {
+            fraction.pop_back();
+        }
+        text += L"." + fraction;
+    }
+    return text;
+}
+
 IntervalField read_interval(std::wstring_view text) {
     text = trim(text);
     if (text.empty()) {
-        return {std::nullopt, L"Enter how long each video plays, for example 5:00."};
+        return {std::nullopt, L"Enter how many seconds each video plays, for example 300."};
     }
     const std::optional<double> seconds = parse_time(text);
     if (!seconds) {
-        return {std::nullopt, std::wstring(L"Not a time. ") + kTimeHelp};
+        return {std::nullopt, L"Not a number of seconds. Type for example 30 or 300."};
     }
     if (*seconds < kMinInterval) {
-        return {std::nullopt, L"Each video plays at least 0:10 (10 seconds)."};
+        return {std::nullopt, L"Each video plays at least 10 seconds."};
     }
     return {seconds, {}};
 }

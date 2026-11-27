@@ -16,8 +16,11 @@ namespace wallflow {
 // A time as the window shows it: 90 -> L"1:30". Nothing -> empty text.
 std::wstring time_text(double seconds);
 std::wstring time_text(std::optional<double> seconds);
+// A number of seconds as plain text: 300 -> L"300", 2.5 -> L"2.5".
+std::wstring seconds_text(double seconds);
 
-// The "play each video for" field. Either `seconds` is set, or `error` says what is wrong.
+// The "play each video for ... seconds" field: seconds (300), or minutes:seconds (5:00) also
+// works. Either `seconds` is set, or `error` says what is wrong.
 struct IntervalField {
     std::optional<double> seconds;
     std::wstring error;

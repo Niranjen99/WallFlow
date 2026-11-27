@@ -28,9 +28,10 @@ using UniqueGdi = std::unique_ptr<std::remove_pointer_t<Handle>, GdiDeleter>;
 // The settings window, opened from the tray. Plain Win32 controls, laid out in code, scaled
 // for the monitor's DPI, and coloured for the Windows light or dark app theme (switching live).
 //
-// Every change is applied at once: the window keeps its own copy of the settings, changes it,
-// and hands the whole copy to `on_change` (the app saves settings.json and applies it). Text
-// fields apply when you press Enter or leave the field; a mistake is shown in red and not saved.
+// Changes wait for the Apply button (or Enter). The window keeps two copies of the settings:
+// `applied_` (what WallFlow uses now) and `settings_` (what the window shows, with the user's
+// pending edits). Apply checks the text fields, then hands `settings_` to `on_change` (the app
+// saves settings.json and applies it). A mistake is shown in red and nothing is applied.
 class SettingsWindow {
 public:
     using ChangeHandler = std::function<void(const Settings&)>;
@@ -74,8 +75,11 @@ private:
     void fill_video_list();
     void show_selected_loop();
     void on_command(int id, int code);
-    void commit_interval();
-    void commit_loop();
+    bool commit_interval();
+    bool commit_loop();
+    bool apply();
+    void close_asking();
+    void update_apply_button();
     void clear_loop();
     void browse_folder();
     void toggle(int id);
@@ -91,7 +95,8 @@ private:
     HINSTANCE instance_;
     ChangeHandler on_change_;
     Action open_file_;
-    Settings settings_;
+    Settings settings_;  // shown in the window, with edits not applied yet
+    Settings applied_;   // what WallFlow uses now
     std::vector<VideoRow> rows_;
 
     HWND hwnd_ = nullptr;
@@ -115,7 +120,8 @@ private:
     HWND videos_heading_ = nullptr, list_ = nullptr;
     HWND loop_start_label_ = nullptr, loop_start_ = nullptr, loop_end_label_ = nullptr;
     HWND loop_end_ = nullptr, whole_video_ = nullptr, loop_hint_ = nullptr;
-    HWND status_ = nullptr, open_file_button_ = nullptr, close_ = nullptr, tooltip_ = nullptr;
+    HWND status_ = nullptr, open_file_button_ = nullptr, apply_ = nullptr, close_ = nullptr;
+    HWND tooltip_ = nullptr;
 };
 
 }  // namespace wallflow::win
