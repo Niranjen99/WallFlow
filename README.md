@@ -15,7 +15,7 @@ A lightweight live wallpaper app for Windows: it plays videos behind the desktop
 Get the zip from the [latest release](https://github.com/Niranjen99/WallFlow/releases/latest), unzip it anywhere and run `wallflow.exe`. Nothing is installed.
 
 - Needs Windows 10 or 11, 64-bit, and a graphics driver (any current NVIDIA, AMD or Intel driver; libmpv needs the `vulkan-1.dll` those drivers install).
-- WallFlow lives in the system tray. Click its icon to open the settings. Right-click it for **Settings...**, **Open settings file...** (Notepad) and **Quit WallFlow**, which gives you your normal wallpaper back.
+- WallFlow lives in the system tray. Click its icon to open the settings. Right-click it for **Settings...** and **Quit WallFlow**, which gives you your normal wallpaper back.
 - The settings window and the tray menu follow the Windows light or dark app theme, and switch live when you change it.
 
 ## Settings

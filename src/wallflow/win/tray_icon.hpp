@@ -24,7 +24,6 @@ public:
     UINT show_menu();
 
     static constexpr UINT kQuit = 1;
-    static constexpr UINT kEditSettings = 2;
     static constexpr UINT kOpenSettings = 3;
 
 private:
