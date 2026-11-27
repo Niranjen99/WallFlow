@@ -26,6 +26,10 @@ Get the zip from the [latest release](https://github.com/Niranjen99/WallFlow/rel
 
 Pick a folder, set how many seconds each video plays, shuffle, mute or volume, and start with Windows. Pick a video in the list to give it its own loop: type its start and end in seconds (`2`, `4.5`) or as `1:30`. Nothing changes until you click **Apply** (or press Enter); a typo is shown in red and nothing is applied. Closing with changes not applied asks whether to apply them. Hover over the loop fields for a note on memory: a loop of 4 seconds or less keeps a second video player loaded all the time.
 
+**Preview** shows the selected video on the desktop right away, with the loop and decoding you set but have not applied yet. The folder rotation stops while you look; **Apply** or closing the window brings it back.
+
+**Compatible decoding** (per video): turn it on for a video that shows blocks of wrong colours. See [A driver bug: corrupted blocks at the bottom](#a-driver-bug-corrupted-blocks-at-the-bottom).
+
 The window writes `%APPDATA%\WallFlow\settings.json`, which you can also edit by hand (the open window follows). Saving from the window rewrites the file, so `//` comments in it are lost.
 
 The first start creates `%APPDATA%\WallFlow\settings.json`. Save it and WallFlow applies the change at once: another folder or a new loop range switches over seamlessly, a typo is reported in the log and ignored, and a half-saved file is ignored until it is valid again.
@@ -40,7 +44,8 @@ The first start creates `%APPDATA%\WallFlow\settings.json`. Save it and WallFlow
   "lock_screen_picture": false,
   "start_with_windows": true,
   "videos": {
-    "goku-hero.mp4": { "start": "0:02", "end": "0:05" }
+    "goku-hero.mp4": { "start": "0:02", "end": "0:05" },
+    "glitchy.mp4": { "compatible_decoding": true }
   }
 }
 ```
@@ -52,7 +57,7 @@ The first start creates `%APPDATA%\WallFlow\settings.json`. Save it and WallFlow
 | `shuffle` | Random order, each video once per round, never the same one twice in a row. | `false` |
 | `mute`, `volume` | Muted means the audio is not even decoded. Volume 0 to 100. | `true`, `50` |
 | `start_with_windows` | Start when you log in (current user only, no admin rights). | `false` |
-| `videos` | Per-video loop range by file name: `start`, `end` or both, as seconds (`90`) or text (`"1:30"`). | whole video |
+| `videos` | Per-video settings by file name: loop `start`, `end` or both, as seconds (`90`) or text (`"1:30"`); `compatible_decoding` decodes the video with Vulkan instead of DirectX. | whole video, DirectX |
 | `lock_screen_picture` | Reserved for the lock screen feature (not active yet). | `false` |
 
 Times can be `90`, `"1:30"` or `"1:02:03.5"`. `//` comments are allowed.
@@ -156,6 +161,26 @@ Folder rotation uses the same swap, with the next video in the waiting player.
 
 The first release paused forever on a PC with the NVIDIA app installed. Its GeForce Overlay keeps a screen-sized window open even while the overlay is closed: layered, at opacity 0, and not click-through. The pause rule saw "a window as big as the monitor" and paused. Now a layered window whose opacity (`GetLayeredWindowAttributes`, `LWA_ALPHA`) is 0 never counts as covering the screen. When the overlay is opened with Alt+Z its opacity rises and the wallpaper pauses as it should. A unit test covers both cases.
 
+## A driver bug: corrupted blocks at the bottom
+
+A user's 4K H.264 video showed a band of orange and purple blocks along the bottom of the screen. To find out whether the file or the decoder was at fault, a small libmpv script saved the same frame with each decoder and compared the pictures, pixel by pixel, with software (CPU) decoding:
+
+| Decoder (RTX 3070) | Mean difference, bottom 10% of the frame |
+|---|---|
+| `d3d11va`, `dxva2` (DirectX video) | 17.5 |
+| `nvdec` (NVIDIA CUDA), `vulkan` | 0.0 (identical to software) |
+
+The top 90% was identical for every decoder, so the file is fine: the GPU driver's DirectX decode path gets this stream wrong. Then the real cost of each fix, measured in WallFlow on that video (20 s average):
+
+| Setup | CPU (12 cores) | Private memory | Picture |
+|---|---|---|---|
+| DirectX `d3d11va`, zero copy (default) | 1.2% | 698 MB | corrupted |
+| `vulkan-copy` | 2.7% | 951 MB | correct |
+| `nvdec-copy` | 2.4% | 1494 MB | correct |
+| Vulkan renderer + Vulkan decoding | 2.1% | 1298 MB | correct |
+
+DirectX stays the default because it is the cheapest and correct for almost every video. A video that shows the bug gets **Compatible decoding**: mpv's `hwdec=vulkan-copy`, passed as a per-file option with `loadfile`, so it applies to that video only and the next one is back on DirectX. Vulkan works on NVIDIA, AMD and Intel (not only NVIDIA like `nvdec`) and needs no change to the renderer. Without Vulkan video support mpv falls back to software decoding, which is slower but also correct.
+
 ## How it watches the folder
 
 A background thread waits on `ReadDirectoryChangesW` (overlapped, together with a stop event, so quitting cancels it cleanly). It does not parse what changed: any change posts one message to the UI thread, which rescans the folder 1 second after the last change (copying a file sends many events). New videos join the shuffle round at random places; deleted ones never play again; in order, playback continues after the last video played even if that one was deleted. A video that fails to load is skipped. The first read is issued in the constructor, before the thread starts, because Windows only records changes from the first call on: a unit test caught a file added right after start being missed.
@@ -210,6 +235,7 @@ Set `WALLFLOW_LOG` to a file path before starting WallFlow and it logs what it d
 - [x] Rotate through a folder of videos with seamless switches, watch the folder for changes
 - [x] Settings file applied live, audio settings, start with Windows, app icon, release zip
 - [x] Settings window (follows the Windows light/dark theme live)
+- [x] Preview a video before applying; per-video compatible decoding for GPU driver bugs
 - [ ] Lock screen picture that matches the wallpaper
 - [ ] Measured results: memory, CPU and GPU use, switch gap
 
