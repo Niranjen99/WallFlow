@@ -31,6 +31,7 @@ add_executable(wallflow_tests
   test_mpv_player.cpp
 )
 target_link_libraries(wallflow_tests PRIVATE wallflow_core GTest::gtest_main)
+target_compile_definitions(wallflow_tests PRIVATE WALLFLOW_EXPECTED_VERSION="${PROJECT_VERSION}")
 wallflow_copy_libmpv(wallflow_tests)
 
 include(GoogleTest)
