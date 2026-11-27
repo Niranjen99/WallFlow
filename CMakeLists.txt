@@ -50,6 +50,7 @@ add_library(wallflow_core
   src/wallflow/loop_range.cpp
   src/wallflow/command_line.cpp
   src/wallflow/playlist.cpp
+  src/wallflow/rotation.cpp
   src/wallflow/win/log.cpp
   src/wallflow/win/window_events.cpp
   src/wallflow/win/desktop.cpp
