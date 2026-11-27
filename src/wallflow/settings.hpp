@@ -33,6 +33,8 @@ struct Settings {
     std::filesystem::path folder;    // videos to rotate through; empty = none chosen yet
     double interval = 300;           // seconds of playing time per video
     bool shuffle = false;
+    // false: switch when the interval is up, even mid-video. true: only at the end of a loop.
+    bool wait_for_loop_end = false;
     bool mute = true;
     int volume = 50;                 // 0 to 100, used when not muted
     bool lock_screen_picture = false;

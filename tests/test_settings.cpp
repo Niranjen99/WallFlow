@@ -151,3 +151,12 @@ TEST(Settings, OnlyVideo) {
     EXPECT_TRUE(wrong.settings.only_video.empty());
     EXPECT_EQ(wrong.warnings.size(), 1u);
 }
+
+TEST(Settings, WaitForLoopEnd) {
+    EXPECT_FALSE(wallflow::parse_settings("{}").settings.wait_for_loop_end);  // on time by default
+    const auto parsed = wallflow::parse_settings(R"({ "wait_for_loop_end": true })");
+    EXPECT_TRUE(parsed.warnings.empty());
+    EXPECT_TRUE(parsed.settings.wait_for_loop_end);
+    EXPECT_EQ(wallflow::parse_settings(wallflow::settings_to_json(parsed.settings)).settings,
+              parsed.settings);
+}

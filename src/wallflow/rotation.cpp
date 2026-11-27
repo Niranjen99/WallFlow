@@ -26,7 +26,20 @@ double Rotation::played(double now) const {
 }
 
 bool Rotation::switch_at_loop_end(double now, double remaining) const {
-    return interval_ && played(now) + std::max(0.0, remaining) >= *interval_;
+    const double slack = wait_for_loop_end_ ? 0.0 : kLoopEndSlack;
+    return interval_ && played(now) + std::max(0.0, remaining) + slack >= *interval_;
+}
+
+std::optional<double> Rotation::switch_before_loop_end(double now, double remaining,
+                                                      double loop_length) const {
+    if (!interval_ || wait_for_loop_end_ || keep_waiting_loaded(loop_length)) {
+        return std::nullopt;
+    }
+    const double due = std::max(0.0, *interval_ - played(now));
+    if (due >= remaining) {
+        return std::nullopt;  // the loop ends first (or at the same moment): switch there
+    }
+    return due;
 }
 
 double Rotation::preload_delay(double remaining) {

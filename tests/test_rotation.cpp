@@ -88,3 +88,51 @@ TEST(Rotation, ShortLoopsKeepTheWaitingPlayerLoaded) {
     EXPECT_TRUE(Rotation::keep_waiting_loaded(2 * Rotation::kPreloadLead));
     EXPECT_FALSE(Rotation::keep_waiting_loaded(10));
 }
+
+TEST(Rotation, SwitchesOnTimeInTheMiddleOfALoop) {
+    Rotation rotation(30.0);
+    rotation.start_video(0, false);
+    // 20 s played, the 45 s loop ends in 25 s: the switch is due in 10 s, before the loop end.
+    const auto due = rotation.switch_before_loop_end(20, 25, 45);
+    ASSERT_TRUE(due.has_value());
+    EXPECT_DOUBLE_EQ(*due, 10);
+    // Already overdue (e.g. the interval was shortened): switch now.
+    EXPECT_DOUBLE_EQ(*rotation.switch_before_loop_end(40, 5, 45), 0);
+}
+
+TEST(Rotation, SwitchesAtTheLoopEndWhenThatComesFirst) {
+    Rotation rotation(30.0);
+    rotation.start_video(0, false);
+    EXPECT_FALSE(rotation.switch_before_loop_end(20, 10, 45).has_value());  // due at 30 = loop end
+    EXPECT_FALSE(rotation.switch_before_loop_end(20, 5, 45).has_value());   // loop ends at 25
+}
+
+TEST(Rotation, PausedTimeDoesNotBringTheSwitchCloser) {
+    Rotation rotation(30.0);
+    rotation.start_video(0, false);
+    rotation.set_paused(true, 10);  // 10 s played, then a game covers the screen for 100 s
+    rotation.set_paused(false, 110);
+    EXPECT_DOUBLE_EQ(*rotation.switch_before_loop_end(110, 40, 60), 20);
+}
+
+TEST(Rotation, WaitForLoopEndAndShortLoopsNeverSwitchMidLoop) {
+    Rotation rotation(30.0);
+    rotation.start_video(0, false);
+    EXPECT_FALSE(rotation.switch_before_loop_end(20, 3, 4).has_value());  // short loop: at its end
+    rotation.set_wait_for_loop_end(true);
+    EXPECT_FALSE(rotation.switch_before_loop_end(20, 25, 45).has_value());
+    Rotation off(std::nullopt);
+    off.start_video(0, false);
+    EXPECT_FALSE(off.switch_before_loop_end(1000, 25, 45).has_value());  // no rotation at all
+}
+
+TEST(Rotation, OnTimeSwitchJustAfterALoopEndMovesToThatLoopEnd) {
+    Rotation rotation(10.0);
+    rotation.start_video(0, false);
+    // The loop ends at 9.98 s, the switch is due at 10 s: switch at the loop end, not 20 ms
+    // after a loop restart.
+    EXPECT_TRUE(rotation.switch_at_loop_end(8.0, 1.98));
+    EXPECT_FALSE(rotation.switch_at_loop_end(8.0, 0.5));  // due 1.5 s later: loop first
+    rotation.set_wait_for_loop_end(true);
+    EXPECT_FALSE(rotation.switch_at_loop_end(8.0, 1.98));  // waiting mode: never early
+}

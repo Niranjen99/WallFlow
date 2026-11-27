@@ -138,7 +138,7 @@ private:
     HWND videos_heading_ = nullptr, list_ = nullptr;
     HWND loop_start_label_ = nullptr, loop_start_ = nullptr, loop_end_label_ = nullptr;
     HWND loop_end_ = nullptr, whole_video_ = nullptr, loop_hint_ = nullptr;
-    HWND compatible_ = nullptr, preview_ = nullptr, only_ = nullptr;
+    HWND compatible_ = nullptr, preview_ = nullptr, only_ = nullptr, wait_loop_ = nullptr;
     HWND status_ = nullptr, apply_ = nullptr, close_ = nullptr;
     HWND version_ = nullptr;
     HWND tooltip_ = nullptr;

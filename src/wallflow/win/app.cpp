@@ -182,6 +182,7 @@ void App::apply_rotation() {
         return;  // a single video from the command line never rotates
     }
     only_active_ = only_video().has_value();
+    engine_->set_wait_for_loop_end(settings_.wait_for_loop_end);
     if (only_active_) {
         engine_->set_rotation(std::nullopt, {});  // loop the one video forever
     } else {
@@ -270,6 +271,7 @@ void App::start_player() {
         // If it should be paused right now (e.g. Explorer restarted while a game runs), it
         // loads paused: the first frame is shown, nothing more is decoded.
         paused_ = covered_ || locked_ || display_off_;
+        engine_->set_wait_for_loop_end(settings_.wait_for_loop_end);
         engine_->play(*first, paused_, interval, std::move(next));
         engine_playing_ = true;
     } catch (const std::exception& e) {
@@ -352,7 +354,8 @@ void App::apply_settings(const Settings& changed) {
         }
         return;
     }
-    if (engine_playing_ && old.interval != changed.interval) {
+    if (engine_playing_ && (old.interval != changed.interval ||
+                            old.wait_for_loop_end != changed.wait_for_loop_end)) {
         apply_rotation();
     }
     if (engine_playing_ &&

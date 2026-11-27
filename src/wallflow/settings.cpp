@@ -143,6 +143,7 @@ ParsedSettings parse_settings(std::string_view text) {
     read.path("folder", s.folder);
     read.interval("interval", s.interval);
     read.flag("shuffle", s.shuffle);
+    read.flag("wait_for_loop_end", s.wait_for_loop_end);
     read.flag("mute", s.mute);
     read.volume("volume", s.volume);
     read.flag("lock_screen_picture", s.lock_screen_picture);
@@ -190,7 +191,8 @@ ParsedSettings parse_settings(std::string_view text) {
     }
 
     // Typos ("suffle") would otherwise be silently ignored.
-    static constexpr const char* kKnown[] = {"folder", "interval", "shuffle", "mute", "volume",
+    static constexpr const char* kKnown[] = {"folder", "interval", "shuffle", "wait_for_loop_end",
+                                             "mute", "volume",
                                              "lock_screen_picture", "start_with_windows",
                                              "only_video", "videos"};
     for (const auto& [key, value] : root.items()) {
@@ -207,6 +209,7 @@ std::string settings_to_json(const Settings& s) {
     root["folder"] = to_utf8(s.folder.wstring());
     root["interval"] = format_time(s.interval);
     root["shuffle"] = s.shuffle;
+    root["wait_for_loop_end"] = s.wait_for_loop_end;
     root["mute"] = s.mute;
     root["volume"] = s.volume;
     root["lock_screen_picture"] = s.lock_screen_picture;

@@ -72,7 +72,9 @@ void VideoEngine::play(const VideoSource& first, bool paused, std::optional<doub
     }
     paused_ = paused;
     playing_ = true;
+    const bool wait = rotation_.wait_for_loop_end();
     rotation_ = Rotation(next ? interval : std::nullopt);
+    rotation_.set_wait_for_loop_end(wait);
     next_ = std::move(next);
     rotation_.start_video(now(), paused);
     shown().video = first;
@@ -95,6 +97,15 @@ void VideoEngine::set_paused(bool paused) {
         timer_armed_ = false;
     } else if (!waiting().video && shown().player->ready()) {
         arm_preload();
+    } else if (mid_loop_switch_ && !switch_now_) {
+        // The next video is loaded and waits for its moment: count down the time left again.
+        const double remaining = shown().player->remaining().value_or(0);
+        const double length = shown().player->loop_length().value_or(0);
+        if (const auto due = rotation_.switch_before_loop_end(now(), remaining, length)) {
+            arm_switch(*due);
+        } else {
+            mid_loop_switch_ = false;  // now it falls on the loop end: the normal swap does it
+        }
     }
 }
 
@@ -111,6 +122,44 @@ void VideoEngine::set_audio(bool muted, int volume) {
 void VideoEngine::set_rotation(std::optional<double> interval, NextVideo next) {
     rotation_.set_interval(next ? interval : std::nullopt);
     next_ = std::move(next);
+    replan();  // an on-time switch may now be earlier, later, or not happen at all
+}
+
+void VideoEngine::set_wait_for_loop_end(bool wait) {
+    if (wait == rotation_.wait_for_loop_end()) {
+        return;
+    }
+    rotation_.set_wait_for_loop_end(wait);
+    replan();
+}
+
+void VideoEngine::replan() {
+    if (!playing_ || gave_up_ || paused_ || switch_now_) {
+        return;  // not playing, or resuming re-plans anyway
+    }
+    if (mid_loop_switch_ && waiting().video) {
+        // A next video is loaded for an on-time switch that may no longer apply: drop it.
+        ::KillTimer(controller_, preload_timer_);
+        timer_armed_ = false;
+        mid_loop_switch_ = false;
+        timer_is_switch_ = false;
+        waiting_is_switch_ = false;
+        waiting().player->unload();
+        waiting().video.reset();
+    }
+    if (!waiting().video && shown().player->ready()) {
+        ::KillTimer(controller_, preload_timer_);
+        timer_armed_ = false;
+        arm_preload();
+    }
+}
+
+void VideoEngine::arm_switch(double delay) {
+    ::KillTimer(controller_, preload_timer_);
+    timer_is_switch_ = true;
+    ::SetTimer(controller_, preload_timer_, static_cast<UINT>(std::max(1L, std::lround(delay * 1000))),
+               nullptr);
+    timer_armed_ = true;
 }
 
 void VideoEngine::switch_now(const VideoSource& video) {
@@ -119,6 +168,8 @@ void VideoEngine::switch_now(const VideoSource& video) {
     }
     ::KillTimer(controller_, preload_timer_);
     timer_armed_ = false;
+    timer_is_switch_ = false;
+    mid_loop_switch_ = false;
     Slot& wait = waiting();
     wait.player->load(video.file, video.loop, true, video.compatible);
     wait.video = video;
@@ -167,7 +218,19 @@ void VideoEngine::on_player_message() {
 void VideoEngine::on_preload_timer() {
     ::KillTimer(controller_, preload_timer_);  // Windows timers repeat; this one is one-shot
     timer_armed_ = false;
-    if (playing_ && !gave_up_ && !waiting().video) {
+    if (!playing_ || gave_up_) {
+        return;
+    }
+    if (timer_is_switch_) {
+        // Time is up: swap in the preloaded next video now (or as soon as it is ready).
+        timer_is_switch_ = false;
+        switch_now_ = true;
+        if (waiting().player->ready()) {
+            swap();
+        }
+        return;
+    }
+    if (!waiting().video) {
         prepare_waiting();
     }
 }
@@ -180,11 +243,14 @@ void VideoEngine::arm_preload() {
         prepare_waiting();
         return;
     }
-    const double delay = Rotation::preload_delay(*remaining);
+    // Whichever comes first: the loop end, or the time to switch (on-time switching).
+    const auto due = rotation_.switch_before_loop_end(now(), *remaining, *length);
+    const double delay = Rotation::preload_delay(due.value_or(*remaining));
     if (delay <= 0) {
         prepare_waiting();
         return;
     }
+    timer_is_switch_ = false;
     ::SetTimer(controller_, preload_timer_, static_cast<UINT>(std::lround(delay * 1000)), nullptr);
     timer_armed_ = true;
 }
@@ -193,6 +259,25 @@ void VideoEngine::prepare_waiting() {
     Slot& on = shown();
     Slot& wait = waiting();
     const double remaining = on.player->remaining().value_or(0);
+    const double length = on.player->loop_length().value_or(0);
+
+    // On time: the switch comes before the loop end, so load the next video now and swap it
+    // in when the time is up (a timer), in the middle of the loop.
+    if (const auto due = rotation_.switch_before_loop_end(now(), remaining, length); due && next_) {
+        if (const auto next = next_(); next && *next != *on.video) {
+            wait.player->load(next->file, next->loop, true, next->compatible);
+            wait.video = next;
+            waiting_is_switch_ = true;
+            mid_loop_switch_ = true;
+            arm_switch(*due);
+            log(L"preloading next video (on time): " + name_of(*next));
+            return;
+        }
+        // Only one video: nothing to switch to. Count again from now and wait for the loop end.
+        rotation_.start_video(now(), paused_);
+        arm_preload();
+        return;
+    }
 
     // Paused time does not count towards the interval, so this decision, made a little before
     // the loop end, is the same one that would be made at the loop end.
@@ -235,6 +320,10 @@ void VideoEngine::swap() {
     }
     waiting_is_switch_ = false;
     switch_now_ = false;
+    mid_loop_switch_ = false;
+    timer_is_switch_ = false;
+    ::KillTimer(controller_, preload_timer_);  // e.g. a switch timer when the loop end came first
+    timer_armed_ = false;
 
     // The old player is now the waiting one. Free it, unless the new loop is too short for that.
     Slot& old = waiting();

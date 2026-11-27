@@ -46,6 +46,7 @@ enum ControlId : int {
     kFolder = 100,
     kBrowse,
     kInterval,
+    kWaitForLoopEnd,
     kShuffle,
     kMute,
     kVolume,
@@ -63,7 +64,7 @@ enum ControlId : int {
 
 // Client area size in pixels at 100% scaling (96 DPI); scale() converts.
 constexpr int kWidth = 520;
-constexpr int kHeight = 668;
+constexpr int kHeight = 700;
 constexpr int kMargin = 20;
 
 // Windows 11 style colours. The accent is the logo's violet, so the window matches the icon.
@@ -302,6 +303,7 @@ void SettingsWindow::create_controls() {
     interval_label_ = add(WC_STATICW, L"Play each video for", label);
     interval_ = add(WC_EDITW, L"", field, kInterval, WS_EX_CLIENTEDGE);
     interval_hint_ = add(WC_STATICW, L"seconds (at least 10)", label);
+    wait_loop_ = add(WC_BUTTONW, L"Wait for the loop to end before switching", toggle, kWaitForLoopEnd);
     shuffle_ = add(WC_BUTTONW, L"Shuffle (random order, each video once per round)", toggle, kShuffle);
     mute_ = add(WC_BUTTONW, L"Mute", toggle, kMute);
     volume_label_ = add(WC_STATICW, L"Volume", label);
@@ -396,29 +398,30 @@ void SettingsWindow::layout() {
     place(interval_label_, m, 84, 132, row);
     place(interval_, m + 136, 84, 70, row);
     place(interval_hint_, m + 216, 84, 260, row);
-    place(shuffle_, m, 118, 420, row);
-    place(mute_, m, 150, 110, row);
-    place(volume_label_, m + 130, 150, 56, row);
-    place(volume_, m + 186, 150, 230, row);
-    place(volume_value_, m + 424, 150, 40, row);
-    place(autostart_, m, 182, 300, row);
+    place(wait_loop_, m, 118, 420, row);
+    place(shuffle_, m, 150, 420, row);
+    place(mute_, m, 182, 110, row);
+    place(volume_label_, m + 130, 182, 56, row);
+    place(volume_, m + 186, 182, 230, row);
+    place(volume_value_, m + 424, 182, 40, row);
+    place(autostart_, m, 214, 300, row);
 
-    place(videos_heading_, m, 224, 400, 24);
-    place(list_, m, 252, right - m, 196);
-    place(loop_start_label_, m, 460, 70, row);
-    place(loop_start_, m + 72, 460, 80, row);
-    place(loop_end_label_, m + 170, 460, 62, row);
-    place(loop_end_, m + 234, 460, 80, row);
-    place(whole_video_, right - 110, 459, 110, 28);
-    place(compatible_, m, 492, 360, row);
-    place(preview_, right - 110, 491, 110, 28);
-    place(only_, m, 524, 360, row);
-    place(loop_hint_, m, 556, right - m, 22);
+    place(videos_heading_, m, 256, 400, 24);
+    place(list_, m, 284, right - m, 196);
+    place(loop_start_label_, m, 492, 70, row);
+    place(loop_start_, m + 72, 492, 80, row);
+    place(loop_end_label_, m + 170, 492, 62, row);
+    place(loop_end_, m + 234, 492, 80, row);
+    place(whole_video_, right - 110, 491, 110, 28);
+    place(compatible_, m, 524, 360, row);
+    place(preview_, right - 110, 523, 110, 28);
+    place(only_, m, 556, 360, row);
+    place(loop_hint_, m, 588, right - m, 22);
 
-    place(status_, m, 586, right - m, 22);
-    place(version_, m, 629, 160, 22);
-    place(apply_, right - 96 - 10 - 96, 624, 96, 30);
-    place(close_, right - 96, 624, 96, 30);
+    place(status_, m, 618, right - m, 22);
+    place(version_, m, 661, 160, 22);
+    place(apply_, right - 96 - 10 - 96, 656, 96, 30);
+    place(close_, right - 96, 656, 96, 30);
 
     // Columns: the loop columns fixed, the name takes what is left (minus a scrollbar).
     RECT list{};
@@ -480,7 +483,7 @@ void SettingsWindow::fill_from_settings() {
     ::SendMessageW(volume_, TBM_SETPOS, TRUE, settings_.volume);
     ::SetWindowTextW(volume_value_, std::to_wstring(settings_.volume).c_str());
     ::EnableWindow(volume_, !settings_.mute);
-    for (HWND toggle : {shuffle_, mute_, autostart_}) {
+    for (HWND toggle : {wait_loop_, shuffle_, mute_, autostart_}) {
         ::InvalidateRect(toggle, nullptr, FALSE);
     }
     fill_video_list();
@@ -561,6 +564,8 @@ void SettingsWindow::set_status(const std::wstring& text, bool error) {
 
 bool SettingsWindow::toggle_on(int id) const {
     switch (id) {
+        case kWaitForLoopEnd:
+            return settings_.wait_for_loop_end;
         case kShuffle:
             return settings_.shuffle;
         case kMute:
@@ -625,6 +630,7 @@ void SettingsWindow::on_command(int id, int code) {
         case kBrowse:
             browse_folder();
             break;
+        case kWaitForLoopEnd:
         case kShuffle:
         case kMute:
         case kStartWithWindows:
@@ -668,6 +674,12 @@ void SettingsWindow::on_command(int id, int code) {
 void SettingsWindow::toggle(int id) {
     std::wstring status;
     switch (id) {
+        case kWaitForLoopEnd:
+            settings_.wait_for_loop_end = !settings_.wait_for_loop_end;
+            status = settings_.wait_for_loop_end
+                         ? L"Switches wait for the end of a loop (a video may play longer)."
+                         : L"Switches happen on time, even in the middle of a video.";
+            break;
         case kShuffle:
             settings_.shuffle = !settings_.shuffle;
             status = settings_.shuffle ? L"Shuffle on." : L"Shuffle off: videos play in name order.";
@@ -783,7 +795,7 @@ void SettingsWindow::cancel_folder_picker() {
 
 void SettingsWindow::update_rotation_controls() {
     const bool alone = std::any_of(rows_.begin(), rows_.end(), [](const VideoRow& row) { return row.only; });
-    for (HWND control : {interval_, shuffle_}) {
+    for (HWND control : {interval_, wait_loop_, shuffle_}) {
         ::EnableWindow(control, !alone);
         ::InvalidateRect(control, nullptr, FALSE);
     }

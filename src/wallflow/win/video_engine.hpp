@@ -72,6 +72,9 @@ public:
     // Changes the rotation while playing (settings changed). The time played so far counts.
     void set_rotation(std::optional<double> interval, NextVideo next);
 
+    // true: switch only at a loop end; false: on time, mid-loop if need be (Rotation).
+    void set_wait_for_loop_end(bool wait);
+
     // Switches to `video` as soon as it is ready, without waiting for the loop end. The same
     // seamless swap: it loads into the waiting player first. Used when the settings change
     // what should play (another folder, a new loop range for the video on screen).
@@ -95,8 +98,13 @@ private:
     Slot& shown() { return slots_[shown_]; }
     Slot& waiting() { return slots_[1 - shown_]; }
 
-    // Starts the preload timer for the shown loop, or loads at once if there is no time.
+    // Starts the preload timer for what comes first, the loop end or an on-time switch, or
+    // loads at once if there is no time.
     void arm_preload();
+    // After a rotation change: plan again, unless the waiting player is already loaded.
+    void replan();
+    // Starts the timer that swaps in the preloaded next video in the middle of the loop.
+    void arm_switch(double delay);
     // Decides what comes after the shown loop and gets the waiting player ready for it.
     void prepare_waiting();
     void swap();
@@ -113,6 +121,8 @@ private:
     bool timer_armed_ = false;
     bool waiting_is_switch_ = false;  // the waiting player holds the next video
     bool switch_now_ = false;         // swap as soon as the waiting player is ready
+    bool mid_loop_switch_ = false;    // the next video swaps in on time, not at the loop end
+    bool timer_is_switch_ = false;    // the armed timer swaps (instead of preloading)
     bool muted_ = true;
     int volume_ = 50;
     int failures_ = 0;       // videos in a row that failed to load
