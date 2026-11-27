@@ -6,7 +6,7 @@
 
 A lightweight live wallpaper app for Windows: it plays videos behind the desktop icons, rotates through a folder of videos with seamless switches, and pauses whenever a maximized or full-screen window (such as a game) covers the screen.
 
-**Status: work in progress.** WallFlow plays videos behind the desktop icons, decoded on the GPU. It loops a video (or a start-to-end part of it), or rotates through a folder, without a black frame or a seek stall at the switch, and notices videos added to or deleted from the folder. It pauses while a maximized or full-screen window covers the screen, the PC is locked or the display is off, lives in the system tray, and recovers by itself when Explorer restarts. Settings live in a JSON file that applies the moment it is saved; a settings window comes next. See the [Roadmap](#roadmap).
+**Status: work in progress.** WallFlow plays videos behind the desktop icons, decoded on the GPU. It loops a video (or a start-to-end part of it), or rotates through a folder, without a black frame or a seek stall at the switch, and notices videos added to or deleted from the folder. It pauses while a maximized or full-screen window covers the screen, the PC is locked or the display is off, lives in the system tray, and recovers by itself when Explorer restarts. A settings window (light or dark, following Windows) changes everything live, and the same settings live in a JSON file you can also edit by hand. See the [Roadmap](#roadmap).
 
 **Tech stack:** C++20, Win32 API, libmpv (FFmpeg, Direct3D 11), nlohmann/json, MSVC, CMake, GoogleTest, GitHub Actions.
 
@@ -15,10 +15,18 @@ A lightweight live wallpaper app for Windows: it plays videos behind the desktop
 Get the zip from the [latest release](https://github.com/Niranjen99/WallFlow/releases/latest), unzip it anywhere and run `wallflow.exe`. Nothing is installed.
 
 - Needs Windows 10 or 11, 64-bit, and a graphics driver (any current NVIDIA, AMD or Intel driver; libmpv needs the `vulkan-1.dll` those drivers install).
-- WallFlow lives in the system tray. Right-click its icon: **Edit settings...** opens the settings file in Notepad; **Quit WallFlow** gives you your normal wallpaper back.
-- The tray menu follows the Windows light or dark app theme.
+- WallFlow lives in the system tray. Click its icon to open the settings. Right-click it for **Settings...**, **Open settings file...** (Notepad) and **Quit WallFlow**, which gives you your normal wallpaper back.
+- The settings window and the tray menu follow the Windows light or dark app theme, and switch live when you change it.
 
 ## Settings
+
+| Dark | Light |
+|---|---|
+| ![Settings window, dark](docs/settings-dark.png) | ![Settings window, light](docs/settings-light.png) |
+
+Every change applies at once, with no Save button: pick a folder, set how long each video plays, shuffle, mute or volume, and start with Windows. Pick a video in the list to give it its own loop: type when the loop starts and ends (`0:02`, `90`, `1:02:03.5`), then press Enter or leave the field. A typo is shown in red and not saved. Hover over the loop fields for a note on memory: a loop of 4 seconds or less keeps a second video player loaded all the time.
+
+The window writes `%APPDATA%\WallFlow\settings.json`, which you can also edit by hand (the open window follows). Saving from the window rewrites the file, so `//` comments in it are lost.
 
 The first start creates `%APPDATA%\WallFlow\settings.json`. Save it and WallFlow applies the change at once: another folder or a new loop range switches over seamlessly, a typo is reported in the log and ignored, and a half-saved file is ignored until it is valid again.
 
@@ -85,15 +93,17 @@ src/
     command_line     the command-line arguments (unit tested)
     playlist         folder scan, play order, shuffle without repeats (unit tested)
     settings         settings.json: parse, validate, write (unit tested)
+    settings_form    what the settings window's fields mean: times, loops, list rows (unit tested)
     rotation         when to switch and when to preload, on a fake clock in tests (unit tested)
     win/             Win32 code: desktop attachment, wallpaper window, tray icon, window
                      events, libmpv player, two-player video engine, folder watcher,
-                     settings file, autostart, theme, app
+                     settings file, settings window, autostart, theme, app
   wallflow.rc.in   icon and version info for the exe; wallflow.manifest: modern controls
 assets/            logo and app icon (tools/make_icon.py builds the .ico from the logo)
+docs/              screenshots
 tests/             GoogleTest unit tests (the player tests run headless, on CI too)
 bench/             loop_bench: measures the pause at a loop point, two-player vs mpv's A-B loop
-.github/workflows/ CI: MSVC Debug and AddressSanitizer builds on Windows
+.github/workflows/ CI (Debug and AddressSanitizer builds); release.yml publishes a zip for a v* tag
 ```
 
 ## How it gets behind the desktop icons
@@ -133,6 +143,14 @@ Two details made it reliable:
 Folder rotation uses the same swap, with the next video in the waiting player.
 
 **The waiting player is only loaded when it is needed.** A loaded 4K player holds a pool of decoded frames, so two loaded players double the memory. Instead, a timer loads the waiting player 2 seconds before the loop end, and after the swap the old player unloads and frees its decoder. Because paused time does not count towards the rotation interval, it is already certain 2 seconds early whether the end restarts the loop or switches to the next video, so the right one is loaded. The timer is stopped while paused and re-armed on resume with the real time left. Loops of 4 seconds or less keep both players loaded: there is no time to unload in between.
+
+## How the settings window works
+
+- **Plain Win32, laid out in code.** No UI framework: the exe stays under 1 MB with no extra DLLs. Every position is written at 96 DPI and scaled with the monitor's DPI, and dragging the window to a monitor with other scaling lays it out again (`WM_DPICHANGED`).
+- **Light and dark.** The title bar uses the documented `DWMWA_USE_IMMERSIVE_DARK_MODE`. Buttons, text fields, the list and its scrollbars use the dark theme classes Windows ships for File Explorer (`DarkMode_Explorer`, `DarkMode_CFD`, `DarkMode_ItemsView`). Colours come from answering `WM_CTLCOLOR*`. A standard checkbox ignores the text colour in dark mode, so the switches are owner-drawn (`BS_OWNERDRAW`), and the volume slider is custom-drawn (`NM_CUSTOMDRAW`). A light/dark change arrives as `WM_SETTINGCHANGE` with `"ImmersiveColorSet"`, and the window repaints in the new theme.
+- **One path for every change.** The window keeps its own copy of the settings, changes it, and hands the whole copy to the app. The app saves it to settings.json and applies it through the same code as a hand edit, so a new loop or folder still switches seamlessly. The folder watcher then reports that write, but the file matches what is already applied, so nothing happens twice.
+- **The logic is testable.** What a typed time means, when a loop is too short, and how an edit changes the settings live in `settings_form`, with no window, so they are unit tested.
+- **A bug found while testing.** Quitting from the tray while the folder picker was open left WallFlow running with no windows. The picker runs its own message loop, which swallowed the `WM_QUIT` that ends the main loop. Now quitting closes the picker (`IFileDialog::Close`), and the main loop also stops on a flag set when the controller window is destroyed, so a swallowed `WM_QUIT` can't leave it waiting forever.
 
 ## How it watches the folder
 
@@ -187,7 +205,7 @@ Set `WALLFLOW_LOG` to a file path before starting WallFlow and it logs what it d
 - [x] Two-player engine: loop between a start and end point with no visible gap
 - [x] Rotate through a folder of videos with seamless switches, watch the folder for changes
 - [x] Settings file applied live, audio settings, start with Windows, app icon, release zip
-- [ ] Settings window (follows the Windows light/dark theme)
+- [x] Settings window (follows the Windows light/dark theme live)
 - [ ] Lock screen picture that matches the wallpaper
 - [ ] Measured results: memory, CPU and GPU use, switch gap
 
