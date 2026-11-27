@@ -136,3 +136,18 @@ TEST(Settings, CompatibleDecodingPerVideo) {
     // Written and read back: the same settings.
     EXPECT_EQ(wallflow::parse_settings(wallflow::settings_to_json(s)).settings, s);
 }
+
+TEST(Settings, OnlyVideo) {
+    const auto parsed = wallflow::parse_settings(R"({ "only_video": "Goku é.mp4" })");
+    EXPECT_TRUE(parsed.warnings.empty());
+    EXPECT_EQ(parsed.settings.only_video, L"Goku \u00e9.mp4");
+    // Written and read back: the same.
+    EXPECT_EQ(wallflow::parse_settings(wallflow::settings_to_json(parsed.settings)).settings,
+              parsed.settings);
+    // Not set: not written, so a plain file stays plain.
+    EXPECT_EQ(wallflow::settings_to_json({}).find("only_video"), std::string::npos);
+
+    const auto wrong = wallflow::parse_settings(R"({ "only_video": 3 })");
+    EXPECT_TRUE(wrong.settings.only_video.empty());
+    EXPECT_EQ(wrong.warnings.size(), 1u);
+}

@@ -49,7 +49,11 @@ struct VideoRow {
     std::wstring start;  // loop start as text, empty = from the beginning
     std::wstring end;    // loop end as text, empty = to the end
     bool compatible = false;
+    bool only = false;  // the one video that plays (Settings::only_video)
 };
+
+// The list's "Options" column for a row: "Only this", "Compatible", both, or empty.
+std::wstring options_text(const VideoRow& row);
 std::vector<VideoRow> video_rows(const std::vector<std::filesystem::path>& videos,
                                  const Settings& settings);
 

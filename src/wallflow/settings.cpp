@@ -147,6 +147,13 @@ ParsedSettings parse_settings(std::string_view text) {
     read.volume("volume", s.volume);
     read.flag("lock_screen_picture", s.lock_screen_picture);
     read.flag("start_with_windows", s.start_with_windows);
+    if (const auto only = root.find("only_video"); only != root.end()) {
+        if (only->is_string()) {
+            s.only_video = from_utf8(only->get<std::string>());
+        } else {
+            read.warn("only_video", "must be a file name like \"clip.mp4\"");
+        }
+    }
 
     if (const auto videos = root.find("videos"); videos != root.end()) {
         if (!videos->is_object()) {
@@ -185,7 +192,7 @@ ParsedSettings parse_settings(std::string_view text) {
     // Typos ("suffle") would otherwise be silently ignored.
     static constexpr const char* kKnown[] = {"folder", "interval", "shuffle", "mute", "volume",
                                              "lock_screen_picture", "start_with_windows",
-                                             "videos"};
+                                             "only_video", "videos"};
     for (const auto& [key, value] : root.items()) {
         if (std::find(std::begin(kKnown), std::end(kKnown), key) == std::end(kKnown)) {
             result.warnings.push_back("unknown setting \"" + key + "\": ignored");
@@ -204,6 +211,9 @@ std::string settings_to_json(const Settings& s) {
     root["volume"] = s.volume;
     root["lock_screen_picture"] = s.lock_screen_picture;
     root["start_with_windows"] = s.start_with_windows;
+    if (!s.only_video.empty()) {
+        root["only_video"] = to_utf8(s.only_video);
+    }
     root["videos"] = nlohmann::ordered_json::object();
     // One entry per video that has a loop, compatible decoding, or both; sorted by name.
     std::set<std::wstring> names(s.compatible_decoding);

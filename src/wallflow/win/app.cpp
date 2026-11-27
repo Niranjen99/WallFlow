@@ -165,6 +165,31 @@ std::filesystem::path App::folder() const {
     return command_line_decides() ? start_.folder : settings_.folder;
 }
 
+std::optional<std::filesystem::path> App::only_video() const {
+    if (!start_.video.empty() || settings_.only_video.empty() || folder().empty()) {
+        return std::nullopt;
+    }
+    const std::filesystem::path file = folder() / settings_.only_video;
+    std::error_code error;  // e.g. the folder is gone: treat as "not there", do not throw
+    if (!std::filesystem::is_regular_file(file, error)) {
+        return std::nullopt;
+    }
+    return file;
+}
+
+void App::apply_rotation() {
+    if (!engine_ || !start_.video.empty()) {
+        return;  // a single video from the command line never rotates
+    }
+    only_active_ = only_video().has_value();
+    if (only_active_) {
+        engine_->set_rotation(std::nullopt, {});  // loop the one video forever
+    } else {
+        const double interval = command_line_decides() ? start_.interval : settings_.interval;
+        engine_->set_rotation(interval, next_video_function());
+    }
+}
+
 std::optional<VideoSource> App::source_for(const std::filesystem::path& video) const {
     if (!start_.video.empty()) {
         return VideoSource{video, start_.loop, settings_.compatible_for(video)};
@@ -198,6 +223,10 @@ std::optional<VideoSource> App::open_folder() {
     }
     playlist_->set_videos(scan_folder(dir));
     log(L"folder " + dir.wstring() + L": " + std::to_wstring(playlist_->size()) + L" videos");
+    if (const auto only = only_video()) {
+        log(L"playing only " + only->filename().wstring());
+        return source_for(*only);
+    }
     if (const auto video = playlist_->next()) {
         return source_for(*video);
     }
@@ -228,7 +257,10 @@ void App::start_player() {
         first = source_for(start_.video);
     } else {
         first = open_folder();
-        next = next_video_function();
+        only_active_ = only_video().has_value();
+        if (!only_active_) {
+            next = next_video_function();  // empty `next` = no rotation: loop the one video
+        }
     }
     if (!first) {
         return;  // nothing to play: the normal wallpaper stays
@@ -261,6 +293,14 @@ void App::rescan_folder() {
     // list up by itself at the next switch.)
     if (!engine_playing_ && engine_ && engine_->alive()) {
         start_player();
+        return;
+    }
+    // The "only" video was added to or deleted from the folder: play it, or rotate again.
+    if (engine_playing_ && !previewing_ && only_video().has_value() != only_active_) {
+        apply_rotation();
+        if (const auto only = only_video()) {
+            engine_->switch_now(*source_for(*only));
+        }
     }
 }
 
@@ -302,17 +342,18 @@ void App::apply_settings(const Settings& changed) {
         return;  // the command line decides what plays
     }
 
-    if (old.folder != changed.folder || old.shuffle != changed.shuffle) {
+    if (old.folder != changed.folder || old.shuffle != changed.shuffle ||
+        old.only_video != changed.only_video) {
         if (!engine_playing_) {
             start_player();
         } else if (const auto first = open_folder()) {
-            engine_->set_rotation(changed.interval, next_video_function());
+            apply_rotation();
             engine_->switch_now(*first);
         }
         return;
     }
     if (engine_playing_ && old.interval != changed.interval) {
-        engine_->set_rotation(changed.interval, next_video_function());
+        apply_rotation();
     }
     if (engine_playing_ &&
         (old.loops != changed.loops || old.compatible_decoding != changed.compatible_decoding)) {
@@ -399,6 +440,8 @@ void App::end_preview() {
     std::optional<VideoSource> back;
     if (!start_.video.empty()) {
         back = source_for(start_.video);
+    } else if (const auto only = only_video()) {
+        back = source_for(*only);
     } else if (playlist_ && playlist_->current()) {
         back = source_for(*playlist_->current());
     }
@@ -406,10 +449,7 @@ void App::end_preview() {
         start_wallpaper();  // the preview was all that played
         return;
     }
-    if (start_.video.empty()) {
-        const double interval = command_line_decides() ? start_.interval : settings_.interval;
-        engine_->set_rotation(interval, next_video_function());
-    }
+    apply_rotation();
     if (engine_->current() != back) {
         engine_->switch_now(*back);
     }

@@ -42,6 +42,9 @@ struct Settings {
     // Videos decoded with Vulkan instead of DirectX, by file name (matched ignoring case).
     // For videos the GPU's DirectX decoder shows with corrupted blocks.
     std::set<std::wstring> compatible_decoding;
+    // Play only this video of the folder (file name), looping, with no rotation. Empty, or a
+    // file that is not in the folder: rotate through the folder as usual.
+    std::wstring only_video;
 
     // The loop setting for `video`, or none.
     [[nodiscard]] LoopSetting loop_for(const std::filesystem::path& video) const;

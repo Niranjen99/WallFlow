@@ -55,6 +55,7 @@ enum ControlId : int {
     kLoopEnd,
     kWholeVideo,
     kCompatible,
+    kOnlyVideo,
     kPreview,
     kApply,
     kClose,
@@ -62,7 +63,7 @@ enum ControlId : int {
 
 // Client area size in pixels at 100% scaling (96 DPI); scale() converts.
 constexpr int kWidth = 520;
-constexpr int kHeight = 636;
+constexpr int kHeight = 668;
 constexpr int kMargin = 20;
 
 // Windows 11 style colours. The accent is the logo's violet, so the window matches the icon.
@@ -314,7 +315,7 @@ void SettingsWindow::create_controls() {
     list_ = add(WC_LISTVIEWW, L"",
                 LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS | LVS_NOSORTHEADER | WS_TABSTOP, kVideoList);
     ListView_SetExtendedListViewStyle(list_, LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER);
-    const wchar_t* columns[] = {L"Video", L"Loop start", L"Loop end", L"Decoding"};
+    const wchar_t* columns[] = {L"Video", L"Loop start", L"Loop end", L"Options"};
     for (int i = 0; i < 4; ++i) {
         LVCOLUMNW column{};
         column.mask = LVCF_TEXT;
@@ -333,6 +334,7 @@ void SettingsWindow::create_controls() {
     whole_video_ = add(WC_BUTTONW, L"Whole video", BS_PUSHBUTTON | WS_TABSTOP, kWholeVideo);
     compatible_ = add(WC_BUTTONW, L"Compatible decoding (if this video shows glitches)", toggle, kCompatible);
     preview_ = add(WC_BUTTONW, L"Preview", BS_PUSHBUTTON | WS_TABSTOP, kPreview);
+    only_ = add(WC_BUTTONW, L"Play only this video (no rotation)", toggle, kOnlyVideo);
     loop_hint_ = add(WC_STATICW,
                      L"Pick a video, then type its loop start and end in seconds (2, 4.5) or as 1:30.",
                      label);
@@ -410,18 +412,19 @@ void SettingsWindow::layout() {
     place(whole_video_, right - 110, 459, 110, 28);
     place(compatible_, m, 492, 360, row);
     place(preview_, right - 110, 491, 110, 28);
-    place(loop_hint_, m, 524, right - m, 22);
+    place(only_, m, 524, 360, row);
+    place(loop_hint_, m, 556, right - m, 22);
 
-    place(status_, m, 554, right - m, 22);
-    place(version_, m, 597, 160, 22);
-    place(apply_, right - 96 - 10 - 96, 592, 96, 30);
-    place(close_, right - 96, 592, 96, 30);
+    place(status_, m, 586, right - m, 22);
+    place(version_, m, 629, 160, 22);
+    place(apply_, right - 96 - 10 - 96, 624, 96, 30);
+    place(close_, right - 96, 624, 96, 30);
 
     // Columns: the loop columns fixed, the name takes what is left (minus a scrollbar).
     RECT list{};
     ::GetClientRect(list_, &list);
     const int time_column = scale(76);
-    const int decoding_column = scale(88);
+    const int decoding_column = scale(110);
     const int scrollbar = ::GetSystemMetricsForDpi(SM_CXVSCROLL, dpi_);
     ListView_SetColumnWidth(list_, 0, std::max(scale(100), static_cast<int>(list.right) - 2 * time_column -
                                                                 decoding_column - scrollbar));
@@ -508,7 +511,8 @@ void SettingsWindow::fill_video_list() {
         ListView_InsertItem(list_, &item);
         ListView_SetItemText(list_, i, 1, row.start.data());
         ListView_SetItemText(list_, i, 2, row.end.data());
-        ListView_SetItemText(list_, i, 3, const_cast<wchar_t*>(row.compatible ? L"Compatible" : L""));
+        std::wstring options = options_text(row);
+        ListView_SetItemText(list_, i, 3, options.data());
         if (row.name == selected_name) {
             reselect = i;
         }
@@ -529,6 +533,7 @@ void SettingsWindow::fill_video_list() {
     }
     ::SetWindowTextW(videos_heading_, heading.c_str());
     show_selected_loop();
+    update_rotation_controls();
 }
 
 int SettingsWindow::selected_row() const {
@@ -541,10 +546,11 @@ void SettingsWindow::show_selected_loop() {
     const bool any = row >= 0;
     ::SetWindowTextW(loop_start_, any ? rows_[row].start.c_str() : L"");
     ::SetWindowTextW(loop_end_, any ? rows_[row].end.c_str() : L"");
-    for (HWND control : {loop_start_, loop_end_, whole_video_, compatible_, preview_}) {
+    for (HWND control : {loop_start_, loop_end_, whole_video_, compatible_, preview_, only_}) {
         ::EnableWindow(control, any);
     }
     ::InvalidateRect(compatible_, nullptr, FALSE);
+    ::InvalidateRect(only_, nullptr, FALSE);
 }
 
 void SettingsWindow::set_status(const std::wstring& text, bool error) {
@@ -564,6 +570,10 @@ bool SettingsWindow::toggle_on(int id) const {
         case kCompatible: {
             const int row = selected_row();
             return row >= 0 && rows_[row].compatible;
+        }
+        case kOnlyVideo: {
+            const int row = selected_row();
+            return row >= 0 && rows_[row].only;
         }
         default:
             return false;
@@ -619,6 +629,7 @@ void SettingsWindow::on_command(int id, int code) {
         case kMute:
         case kStartWithWindows:
         case kCompatible:
+        case kOnlyVideo:
             // A quick second click on an owner-drawn button arrives as a double-click.
             if (code == BN_CLICKED || code == BN_DOUBLECLICKED) {
                 toggle(id);
@@ -682,9 +693,28 @@ void SettingsWindow::toggle(int id) {
             VideoRow& video = rows_[row];
             video.compatible = !video.compatible;
             set_compatible(settings_, video.name, video.compatible);
-            ListView_SetItemText(list_, row, 3, const_cast<wchar_t*>(video.compatible ? L"Compatible" : L""));
+            std::wstring options = options_text(video);
+            ListView_SetItemText(list_, row, 3, options.data());
             status = video.compatible ? L"Compatible decoding for " + video.name + L"."
                                       : L"Normal decoding for " + video.name + L".";
+            break;
+        }
+        case kOnlyVideo: {
+            const int row = selected_row();
+            if (row < 0) {
+                return;
+            }
+            const bool on = !rows_[row].only;
+            settings_.only_video = on ? rows_[row].name : std::wstring();
+            // At most one video plays alone: update every row's mark.
+            for (int i = 0; i < static_cast<int>(rows_.size()); ++i) {
+                rows_[i].only = on && i == row;
+                std::wstring options = options_text(rows_[i]);
+                ListView_SetItemText(list_, i, 3, options.data());
+            }
+            update_rotation_controls();
+            status = on ? std::wstring(L"Only this video will play, looping.")
+                        : std::wstring(L"All videos in the folder will play again.");
             break;
         }
         default:
@@ -748,6 +778,14 @@ void SettingsWindow::clear_loop() {
 void SettingsWindow::cancel_folder_picker() {
     if (picker_ != nullptr) {
         picker_->Close(HRESULT_FROM_WIN32(ERROR_CANCELLED));  // Show() returns this
+    }
+}
+
+void SettingsWindow::update_rotation_controls() {
+    const bool alone = std::any_of(rows_.begin(), rows_.end(), [](const VideoRow& row) { return row.only; });
+    for (HWND control : {interval_, shuffle_}) {
+        ::EnableWindow(control, !alone);
+        ::InvalidateRect(control, nullptr, FALSE);
     }
 }
 

@@ -66,6 +66,10 @@ private:
     // rotation, until end_preview() (Apply, or the window closes) brings back what was playing.
     void preview(const VideoSource& video);
     void end_preview();
+    // The video to play alone (settings "only_video"), if it is set and in the folder.
+    [[nodiscard]] std::optional<std::filesystem::path> only_video() const;
+    // Tells the engine what comes next: nothing (only one video) or the folder's playlist.
+    void apply_rotation();
     // The settings window closed: end a preview, and go back to the applied audio (the window
     // plays mute/volume changes at once, before they are applied).
     void settings_window_closed();
@@ -92,7 +96,8 @@ private:
     std::unique_ptr<SettingsWindow> settings_window_;  // created the first time it is opened
     int attach_attempts_ = 0;
     bool quitting_ = false;
-    bool previewing_ = false;  // the controller window is gone: leave the message loop
+    bool previewing_ = false;
+    bool only_active_ = false;  // playing only_video(), with no rotation  // the controller window is gone: leave the message loop
 
     std::unique_ptr<WindowEvents> events_;
     HPOWERNOTIFY display_notify_ = nullptr;

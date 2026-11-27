@@ -90,3 +90,16 @@ TEST(SettingsForm, SetCompatibleReplacesAnEntryThatDiffersOnlyInCase) {
     const auto rows = wallflow::video_rows({L"clip.mp4"}, settings);
     EXPECT_FALSE(rows[0].compatible);
 }
+
+TEST(SettingsForm, OnlyVideoRowIgnoresCase) {
+    Settings settings;
+    settings.only_video = L"CLIP.mp4";
+    settings.compatible_decoding.insert(L"clip.mp4");
+    const auto rows = wallflow::video_rows({L"C:/v/clip.MP4", L"C:/v/other.mp4"}, settings);
+    EXPECT_TRUE(rows[0].only);
+    EXPECT_FALSE(rows[1].only);
+    EXPECT_EQ(wallflow::options_text(rows[0]), L"Only, compatible");
+    EXPECT_EQ(wallflow::options_text(rows[1]), L"");
+    EXPECT_EQ(wallflow::options_text({L"a", L"", L"", true, false}), L"Compatible");
+    EXPECT_EQ(wallflow::options_text({L"a", L"", L"", false, true}), L"Only this");
+}

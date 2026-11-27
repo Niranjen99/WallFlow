@@ -119,10 +119,21 @@ std::vector<VideoRow> video_rows(const std::vector<std::filesystem::path>& video
     rows.reserve(videos.size());
     for (const std::filesystem::path& video : videos) {
         const LoopSetting loop = settings.loop_for(video);
-        rows.push_back({video.filename().wstring(), time_text(loop.start), time_text(loop.end),
-                        settings.compatible_for(video)});
+        const std::wstring name = video.filename().wstring();
+        rows.push_back({name, time_text(loop.start), time_text(loop.end),
+                        settings.compatible_for(video), same_name(name, settings.only_video)});
     }
     return rows;
+}
+
+std::wstring options_text(const VideoRow& row) {
+    if (row.only && row.compatible) {
+        return L"Only, compatible";
+    }
+    if (row.only) {
+        return L"Only this";
+    }
+    return row.compatible ? L"Compatible" : L"";
 }
 
 }  // namespace wallflow

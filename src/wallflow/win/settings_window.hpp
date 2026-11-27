@@ -94,6 +94,8 @@ private:
     void update_apply_button();
     void clear_loop();
     void preview();
+    // Greys out the interval and shuffle while one video plays alone (they do nothing then).
+    void update_rotation_controls();
     void browse_folder();
     void toggle(int id);
     void changed(const std::wstring& status);
@@ -136,7 +138,7 @@ private:
     HWND videos_heading_ = nullptr, list_ = nullptr;
     HWND loop_start_label_ = nullptr, loop_start_ = nullptr, loop_end_label_ = nullptr;
     HWND loop_end_ = nullptr, whole_video_ = nullptr, loop_hint_ = nullptr;
-    HWND compatible_ = nullptr, preview_ = nullptr;
+    HWND compatible_ = nullptr, preview_ = nullptr, only_ = nullptr;
     HWND status_ = nullptr, apply_ = nullptr, close_ = nullptr;
     HWND version_ = nullptr;
     HWND tooltip_ = nullptr;
