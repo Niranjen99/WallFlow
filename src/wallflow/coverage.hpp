@@ -23,12 +23,15 @@ struct WindowState {
     bool cloaked = false;     // exists and "visible", but DWM does not draw it (suspended apps,
                               // other virtual desktops, hidden system windows)
     bool click_through = false;  // WS_EX_TRANSPARENT: overlays that let clicks pass through
+    bool see_through = false;    // layered with opacity 0: exists but draws nothing (e.g. the
+                                 // NVIDIA GeForce Overlay while it is closed)
 };
 
 // The pause rule: the wallpaper on `monitor` should pause when a real window covers it, i.e. a
 // maximized window on that monitor or a window as big as the whole monitor (full-screen games
 // and videos). Desktop, taskbar and WallFlow's own windows never count, and neither do
-// windows that cannot actually be seen (hidden, minimized, cloaked, click-through overlays).
+// windows that cannot actually be seen (hidden, minimized, cloaked, click-through or fully
+// transparent overlays).
 bool is_monitor_covered(const Rect& monitor, std::span<const WindowState> windows);
 
 }  // namespace wallflow

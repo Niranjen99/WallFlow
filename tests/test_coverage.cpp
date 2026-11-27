@@ -79,6 +79,16 @@ TEST(Coverage, ClickThroughOverlayDoesNotCover) {
     EXPECT_FALSE(is_monitor_covered(kMonitor, std::vector{overlay}));
 }
 
+TEST(Coverage, FullyTransparentOverlayDoesNotCover) {
+    // Found on a real PC: the NVIDIA GeForce Overlay keeps a screen-sized layered window open
+    // at opacity 0 (not click-through), which paused the wallpaper forever.
+    auto overlay = window(kMonitor, L"CEF-OSC-WIDGET");
+    overlay.see_through = true;
+    EXPECT_FALSE(is_monitor_covered(kMonitor, std::vector{overlay}));
+    overlay.see_through = false;  // opened with Alt+Z: now it really covers the screen
+    EXPECT_TRUE(is_monitor_covered(kMonitor, std::vector{overlay}));
+}
+
 TEST(Coverage, MaximizedOnAnotherMonitorDoesNotCover) {
     // A second monitor to the right of the primary one.
     auto other = window({1912, -8, 3848, 1040}, L"Chrome_WidgetWin_1");

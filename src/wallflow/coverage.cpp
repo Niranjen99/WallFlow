@@ -41,7 +41,8 @@ bool center_inside(const Rect& window, const Rect& monitor) {
 
 bool is_monitor_covered(const Rect& monitor, std::span<const WindowState> windows) {
     for (const WindowState& w : windows) {
-        if (!w.visible || w.minimized || w.cloaked || w.click_through || is_ignored(w.class_name)) {
+        if (!w.visible || w.minimized || w.cloaked || w.click_through || w.see_through ||
+            is_ignored(w.class_name)) {
             continue;
         }
         // A maximized window is slightly larger than the work area (its invisible resize

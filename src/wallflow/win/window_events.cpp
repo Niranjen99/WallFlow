@@ -128,7 +128,16 @@ std::vector<WindowState> snapshot_windows() {
         DWORD cloaked = 0;
         w.cloaked = SUCCEEDED(::DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED, &cloaked, sizeof cloaked)) &&
                     cloaked != 0;
-        w.click_through = (::GetWindowLongPtrW(hwnd, GWL_EXSTYLE) & WS_EX_TRANSPARENT) != 0;
+        const LONG_PTR ex_style = ::GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+        w.click_through = (ex_style & WS_EX_TRANSPARENT) != 0;
+        // A layered window can have one opacity for the whole window (LWA_ALPHA). At 0 it is
+        // completely invisible, however big it is.
+        if ((ex_style & WS_EX_LAYERED) != 0) {
+            BYTE alpha = 255;
+            DWORD flags = 0;
+            w.see_through = ::GetLayeredWindowAttributes(hwnd, nullptr, &alpha, &flags) &&
+                            (flags & LWA_ALPHA) != 0 && alpha == 0;
+        }
         windows.push_back(std::move(w));
     }
     return windows;
