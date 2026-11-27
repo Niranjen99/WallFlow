@@ -5,6 +5,7 @@
 #include "wallflow/desktop_layout.hpp"
 
 using wallflow::AttachPlan;
+using wallflow::describe_desktop;
 using wallflow::DesktopLayout;
 using wallflow::plan_attach;
 using wallflow::WindowInfo;
@@ -63,6 +64,46 @@ TEST(DesktopLayout, IconsInProgmanWithoutAWallpaperLayerIsNotReady) {
         {0x61, 0x60, L"SHELLDLL_DefView"},
     };
     EXPECT_FALSE(plan_attach(windows).has_value());
+}
+
+TEST(DesktopLayout, FriendsLaptopBeforeAndAfterTheLayerAppears) {
+    // A friend's laptop on 2026-11-27 (build 26300, Windows animations off): after 0x052C with
+    // (0, 0) Progman still held only the icons, so WallFlow gave up. After (0xD, 1) the
+    // WorkerW child appeared. Handles from that report.
+    std::vector<WindowInfo> windows{
+        {0xD063E, 0, L"WorkerW"},  // unrelated hidden WorkerW windows
+        {0x10166, 0, L"WorkerW"},
+        {0x1014C, 0, L"Progman"},
+        {0x10152, 0x1014C, L"SHELLDLL_DefView"},
+    };
+    EXPECT_FALSE(plan_attach(windows).has_value());
+
+    windows.push_back({0x20000, 0x1014C, L"WorkerW"});
+    const auto plan = plan_attach(windows);
+    ASSERT_TRUE(plan.has_value());
+    EXPECT_EQ(plan->layout, DesktopLayout::Modern);
+    EXPECT_EQ(plan->parent, 0x1014Cu);
+    EXPECT_EQ(plan->insert_after, 0x10152u);
+}
+
+TEST(DesktopLayout, DescribeShowsProgmanAndWorkerWWithChildren) {
+    const std::vector<WindowInfo> windows{
+        {0x10, 0, L"WorkerW"},
+        {0x11, 0, L"WorkerW"},
+        {0x20, 0, L"WorkerW"},
+        {0x21, 0x20, L"SHELLDLL_DefView"},
+        {0x30, 0, L"Notepad"},
+        {0x60, 0, L"Progman"},
+        {0x61, 0x60, L"SHELLDLL_DefView"},
+        {0x62, 0x60, L"WorkerW"},
+    };
+    EXPECT_EQ(describe_desktop(windows),
+              L"WorkerW [SHELLDLL_DefView]; Progman [SHELLDLL_DefView, WorkerW]; 2 empty WorkerW");
+}
+
+TEST(DesktopLayout, DescribeWithoutExplorer) {
+    EXPECT_EQ(describe_desktop(std::vector<WindowInfo>{{0x10, 0, L"Notepad"}}),
+              L"no Progman; 0 empty WorkerW");
 }
 
 TEST(DesktopLayout, NoDesktopAtAll) {

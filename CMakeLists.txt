@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.25)
 
-project(WallFlow VERSION 0.5.1 LANGUAGES CXX)
+project(WallFlow VERSION 0.5.2 LANGUAGES CXX)
 
 if(NOT WIN32 OR NOT MSVC)
   message(FATAL_ERROR "WallFlow is a Windows application and is built with MSVC.")

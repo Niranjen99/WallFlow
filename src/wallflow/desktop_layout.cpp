@@ -61,4 +61,29 @@ std::optional<AttachPlan> plan_attach(std::span<const WindowInfo> windows) {
     return std::nullopt;
 }
 
+std::wstring describe_desktop(std::span<const WindowInfo> windows) {
+    std::wstring text;
+    std::size_t other_workerw = 0;
+    for (const auto& top : windows) {
+        if (top.parent != 0) {
+            continue;
+        }
+        std::wstring children;
+        for (const auto& child : windows) {
+            if (child.parent == top.handle) {
+                children += (children.empty() ? L"" : L", ") + child.class_name;
+            }
+        }
+        if (top.class_name == kProgman || (top.class_name == kWorkerW && !children.empty())) {
+            text += top.class_name + L" [" + children + L"]; ";
+        } else if (top.class_name == kWorkerW) {
+            ++other_workerw;
+        }
+    }
+    if (text.empty()) {
+        text = L"no Progman; ";
+    }
+    return text + std::to_wstring(other_workerw) + L" empty WorkerW";
+}
+
 }  // namespace wallflow

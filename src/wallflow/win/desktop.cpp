@@ -69,8 +69,12 @@ std::optional<DesktopLayout> attach_behind_icons(HWND window) {
         return std::nullopt;  // Explorer is not running (yet)
     }
     // Harmless if the layer already exists. The timeout stops a hung Explorer from hanging us.
+    // Two variants, because neither works everywhere: with arguments (0, 0) Explorer did NOT
+    // create the layer on a laptop with Windows animations turned off (build 26300, 2026-11-27);
+    // (0xD, 1) did. The meaning of the arguments is undocumented.
     DWORD_PTR ignored = 0;
     ::SendMessageTimeoutW(progman, kSpawnWallpaperLayer, 0, 0, SMTO_NORMAL, 1000, &ignored);
+    ::SendMessageTimeoutW(progman, kSpawnWallpaperLayer, 0xD, 1, SMTO_NORMAL, 1000, &ignored);
 
     const auto snapshot = snapshot_desktop();
     const auto plan = plan_attach(snapshot);

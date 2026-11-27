@@ -36,4 +36,9 @@ struct AttachPlan {
 // if the desktop is not ready (for example, Explorer has not created the wallpaper layer).
 std::optional<AttachPlan> plan_attach(std::span<const WindowInfo> windows);
 
+// A short text picture of the parts of the snapshot plan_attach() looks at: every Progman
+// and every WorkerW that has children, with those children. Written to the log when attaching
+// fails, so a bug report from another PC shows its desktop layout.
+std::wstring describe_desktop(std::span<const WindowInfo> windows);
+
 }  // namespace wallflow

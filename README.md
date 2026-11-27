@@ -127,6 +127,8 @@ Windows has no official API for this. WallFlow sends Explorer the undocumented m
 
 The choice is made by a pure function over a snapshot of the window tree, so both layouts are unit tested.
 
+The message's two arguments are undocumented too, and the usual `0, 0` is not enough everywhere: on a laptop with Windows animations turned off, Explorer answered it but created no layer, and WallFlow gave up with "could not find the desktop to draw on". A small diagnostic script showed that `0xD, 1` does create it there, so WallFlow sends both. If attaching still fails, the log (`WALLFLOW_LOG`) records the desktop window layout it saw.
+
 ## How it knows when to pause
 
 Nothing is polled. WallFlow subscribes to Windows' accessibility events (`SetWinEventHook`): focus changes, windows shown, hidden, minimized, cloaked, moved or resized. A burst of events (dragging a window sends dozens) is collapsed into one check 200 ms after it ends. The check takes a snapshot of the visible windows and asks a pure, unit-tested function whether one covers the monitor:

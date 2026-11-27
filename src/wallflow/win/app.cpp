@@ -10,6 +10,7 @@
 
 #include "wallflow/coverage.hpp"
 #include "wallflow/win/autostart.hpp"
+#include "wallflow/win/desktop.hpp"
 #include "wallflow/win/log.hpp"
 #include "wallflow/win/settings_file.hpp"
 #include "wallflow/win/theme.hpp"
@@ -148,7 +149,7 @@ void App::try_attach() {
     }
     if (attach_attempts_ >= kMaxAttachAttempts) {
         ::KillTimer(hwnd_, kAttachTimer);
-        log(L"desktop not found, giving up");
+        log(L"desktop not found, giving up. Desktop: " + describe_desktop(snapshot_desktop()));
         ::MessageBoxW(nullptr, L"WallFlow could not find the desktop to draw on.", L"WallFlow",
                       MB_OK | MB_ICONWARNING);
         return;
