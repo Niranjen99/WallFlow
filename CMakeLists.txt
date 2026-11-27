@@ -47,6 +47,7 @@ add_library(wallflow_core
   src/wallflow/version.cpp
   src/wallflow/desktop_layout.cpp
   src/wallflow/coverage.cpp
+  src/wallflow/loop_range.cpp
   src/wallflow/win/log.cpp
   src/wallflow/win/window_events.cpp
   src/wallflow/win/desktop.cpp
