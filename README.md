@@ -24,7 +24,7 @@ Get the zip from the [latest release](https://github.com/Niranjen99/WallFlow/rel
 |---|---|
 | ![Settings window, dark](docs/settings-dark.png) | ![Settings window, light](docs/settings-light.png) |
 
-Pick a folder, set how many seconds each video plays, shuffle, mute or volume, and start with Windows. Pick a video in the list to give it its own loop: type its start and end in seconds (`2`, `4.5`) or as `1:30`. Nothing changes until you click **Apply** (or press Enter); a typo is shown in red and nothing is applied. Closing with changes not applied asks whether to apply them. Hover over the loop fields for a note on memory: a loop of 4 seconds or less keeps a second video player loaded all the time.
+Pick a folder, set how many seconds each video plays (on time, or at the end of a loop), shuffle, mute or volume, and start with Windows. Pick a video in the list to give it its own loop: type its start and end in seconds (`2`, `4.5`) or as `1:30`. Nothing changes until you click **Apply** (or press Enter); a typo is shown in red and nothing is applied. Closing with changes not applied asks whether to apply them. Hover over the loop fields for a note on memory: a loop of 4 seconds or less keeps a second video player loaded all the time.
 
 Volume and mute are heard as soon as you change them (closing without Apply puts the old sound back). A click on the volume track jumps straight to that point.
 
@@ -43,6 +43,7 @@ The first start creates `%APPDATA%\WallFlow\settings.json`. Save it and WallFlow
   "folder": "C:\\Users\\me\\Videos\\Wallpapers",
   "interval": "5:00",
   "shuffle": true,
+  "wait_for_loop_end": false,
   "mute": true,
   "volume": 50,
   "lock_screen_picture": false,
@@ -57,7 +58,8 @@ The first start creates `%APPDATA%\WallFlow\settings.json`. Save it and WallFlow
 | Setting | Meaning | Default |
 |---|---|---|
 | `folder` | Folder of videos to play (not its subfolders). Backslashes are written `\\` in JSON. | none: your normal wallpaper stays |
-| `interval` | Playing time per video before the next one, at least 10 s. Paused time does not count; the switch waits for the end of the current loop. | `"5:00"` |
+| `interval` | Playing time per video before the next one, at least 10 s. Paused time does not count. | `"5:00"` |
+| `wait_for_loop_end` | `false`: switch when the time is up, even mid-video. `true`: wait for the end of the current loop. | `false` |
 | `shuffle` | Random order, each video once per round, never the same one twice in a row. | `false` |
 | `mute`, `volume` | Muted means the audio is not even decoded. Volume 0 to 100. | `true`, `50` |
 | `start_with_windows` | Start when you log in (current user only, no admin rights). | `false` |
@@ -151,6 +153,8 @@ Two details made it reliable:
 - **A bad loop range never breaks playback.** A start past the end of the file, or a loop shorter than 0.5 s, falls back to the whole video. That can only be checked once the file is loaded and its length is known.
 
 Folder rotation uses the same swap, with the next video in the waiting player.
+
+**Switching on time.** By default a video is switched when its time is up, even in the middle of a loop: 2 seconds before, the next video is loaded into the waiting player, and a timer swaps it in on time. Whichever comes first, the loop end or the switch, decides what is preloaded, so memory use stays the same: at most two players, the second one only for those 2 seconds. Two exceptions: a switch due less than 1 second after a loop end happens at that loop end (otherwise the loop would restart and the next video would cut in a moment later), and loops of 4 seconds or less switch at a loop end (both of their players stay loaded, and a third would cost another decoder). With **Wait for the loop to end before switching** on, every switch happens at a loop end, so a video can play longer than its time. Measured with an interval of 10 s on 4K videos: on time, every switch came 10.0 s after the last (within 0.03 s, or up to 1 s early at a loop end); waiting for the loop end, they came after 11 to 19 s.
 
 **The waiting player is only loaded when it is needed.** A loaded 4K player holds a pool of decoded frames, so two loaded players double the memory. Instead, a timer loads the waiting player 2 seconds before the loop end, and after the swap the old player unloads and frees its decoder. Because paused time does not count towards the rotation interval, it is already certain 2 seconds early whether the end restarts the loop or switches to the next video, so the right one is loaded. The timer is stopped while paused and re-armed on resume with the real time left. Loops of 4 seconds or less keep both players loaded: there is no time to unload in between.
 
