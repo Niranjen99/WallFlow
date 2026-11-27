@@ -1,12 +1,53 @@
+<p align="center"><img src="assets/wallflow-logo.png" alt="WallFlow logo" width="160"></p>
+
 # WallFlow
 
 [![CI](https://github.com/Niranjen99/WallFlow/actions/workflows/ci.yml/badge.svg)](https://github.com/Niranjen99/WallFlow/actions/workflows/ci.yml)
 
 A lightweight live wallpaper app for Windows: it plays videos behind the desktop icons, rotates through a folder of videos with seamless switches, and pauses whenever a maximized or full-screen window (such as a game) covers the screen.
 
-**Status: work in progress.** WallFlow plays videos behind the desktop icons, decoded on the GPU. It loops a video (or a start-to-end part of it), or rotates through a folder, without a black frame or a seek stall at the switch, and notices videos added to or deleted from the folder. It pauses while a maximized or full-screen window covers the screen, the PC is locked or the display is off, lives in the system tray, and recovers by itself when Explorer restarts. The config file and settings window come next. See the [Roadmap](#roadmap).
+**Status: work in progress.** WallFlow plays videos behind the desktop icons, decoded on the GPU. It loops a video (or a start-to-end part of it), or rotates through a folder, without a black frame or a seek stall at the switch, and notices videos added to or deleted from the folder. It pauses while a maximized or full-screen window covers the screen, the PC is locked or the display is off, lives in the system tray, and recovers by itself when Explorer restarts. Settings live in a JSON file that applies the moment it is saved; a settings window comes next. See the [Roadmap](#roadmap).
 
-**Tech stack:** C++20, Win32 API, libmpv (FFmpeg, Direct3D 11), MSVC, CMake, GoogleTest, GitHub Actions.
+**Tech stack:** C++20, Win32 API, libmpv (FFmpeg, Direct3D 11), nlohmann/json, MSVC, CMake, GoogleTest, GitHub Actions.
+
+## Download and use
+
+Get the zip from the [latest release](https://github.com/Niranjen99/WallFlow/releases/latest), unzip it anywhere and run `wallflow.exe`. Nothing is installed.
+
+- Needs Windows 10 or 11, 64-bit, and a graphics driver (any current NVIDIA, AMD or Intel driver; libmpv needs the `vulkan-1.dll` those drivers install).
+- WallFlow lives in the system tray. Right-click its icon: **Edit settings...** opens the settings file in Notepad; **Quit WallFlow** gives you your normal wallpaper back.
+- The tray menu follows the Windows light or dark app theme.
+
+## Settings
+
+The first start creates `%APPDATA%\WallFlow\settings.json`. Save it and WallFlow applies the change at once: another folder or a new loop range switches over seamlessly, a typo is reported in the log and ignored, and a half-saved file is ignored until it is valid again.
+
+```json
+{
+  "folder": "C:\\Users\\me\\Videos\\Wallpapers",
+  "interval": "5:00",
+  "shuffle": true,
+  "mute": true,
+  "volume": 50,
+  "lock_screen_picture": false,
+  "start_with_windows": true,
+  "videos": {
+    "goku-hero.mp4": { "start": "0:02", "end": "0:05" }
+  }
+}
+```
+
+| Setting | Meaning | Default |
+|---|---|---|
+| `folder` | Folder of videos to play (not its subfolders). Backslashes are written `\\` in JSON. | none: your normal wallpaper stays |
+| `interval` | Playing time per video before the next one, at least 10 s. Paused time does not count; the switch waits for the end of the current loop. | `"5:00"` |
+| `shuffle` | Random order, each video once per round, never the same one twice in a row. | `false` |
+| `mute`, `volume` | Muted means the audio is not even decoded. Volume 0 to 100. | `true`, `50` |
+| `start_with_windows` | Start when you log in (current user only, no admin rights). | `false` |
+| `videos` | Per-video loop range by file name: `start`, `end` or both, as seconds (`90`) or text (`"1:30"`). | whole video |
+| `lock_screen_picture` | Reserved for the lock screen feature (not active yet). | `false` |
+
+Times can be `90`, `"1:30"` or `"1:02:03.5"`. `//` comments are allowed.
 
 ## Build and run
 
@@ -26,9 +67,11 @@ build\debug\wallflow.exe "C:\Videos\clip.mp4" --start 0:02 --end 0:05
 build\debug\wallflow.exe --folder "C:\Videos" --interval 5:00 --shuffle
 ```
 
-The first configure downloads libmpv (about 32 MB) and checks its SHA-256. For now the video is given on the command line; without one, your normal wallpaper stays. `--start` and `--end` (seconds, `m:ss` or `h:mm:ss.s`) loop only that part of the video; without them the whole video loops. `--folder` rotates through the videos in a folder (not its subfolders): each one plays for at least `--interval` of playing time (default 5 minutes, paused time does not count) and the switch happens at the end of its current loop. `--shuffle` plays them in random order, each once per round. WallFlow runs in the system tray. Right-click its icon and choose **Quit WallFlow** to stop it and get your normal wallpaper back.
+The first configure downloads libmpv (about 32 MB) and nlohmann/json and checks their SHA-256. With no arguments, WallFlow plays what settings.json says. A video or folder on the command line overrides the file for what plays (handy for testing): `--start` and `--end` (seconds, `m:ss` or `h:mm:ss.s`) loop only that part of the video; without them the whole video loops. `--folder` rotates through the videos in a folder (not its subfolders): each one plays for at least `--interval` of playing time (default 5 minutes, paused time does not count) and the switch happens at the end of its current loop. `--shuffle` plays them in random order, each once per round. WallFlow runs in the system tray. Right-click its icon and choose **Quit WallFlow** to stop it and get your normal wallpaper back.
 
-Presets: `debug`, `release`, and `asan` (Debug with AddressSanitizer, which CI also runs).
+Presets: `debug`, `release`, and `asan` (Debug with AddressSanitizer, which CI also runs). The `debug` and `release` builds link the C++ runtime statically, so the exe runs on PCs without the Visual C++ Redistributable.
+
+A release is built by pushing a tag: `git tag v0.1.0 && git push origin v0.1.0` runs `.github/workflows/release.yml`, which builds, tests, zips `wallflow.exe`, `libmpv-2.dll` and the licence files, and publishes a GitHub Release.
 
 ## Layout
 
@@ -41,9 +84,13 @@ src/
     loop_range       checks a loop start/end against the video, parses typed times (unit tested)
     command_line     the command-line arguments (unit tested)
     playlist         folder scan, play order, shuffle without repeats (unit tested)
+    settings         settings.json: parse, validate, write (unit tested)
     rotation         when to switch and when to preload, on a fake clock in tests (unit tested)
     win/             Win32 code: desktop attachment, wallpaper window, tray icon, window
-                     events, libmpv player, two-player video engine, folder watcher, app
+                     events, libmpv player, two-player video engine, folder watcher,
+                     settings file, autostart, theme, app
+  wallflow.rc.in   icon and version info for the exe; wallflow.manifest: modern controls
+assets/            logo and app icon (tools/make_icon.py builds the .ico from the logo)
 tests/             GoogleTest unit tests (the player tests run headless, on CI too)
 bench/             loop_bench: measures the pause at a loop point, two-player vs mpv's A-B loop
 .github/workflows/ CI: MSVC Debug and AddressSanitizer builds on Windows
@@ -139,9 +186,13 @@ Set `WALLFLOW_LOG` to a file path before starting WallFlow and it logs what it d
 - [x] Pause when a maximized or full-screen window covers the screen, while locked, and while the display is off
 - [x] Two-player engine: loop between a start and end point with no visible gap
 - [x] Rotate through a folder of videos with seamless switches, watch the folder for changes
-- [ ] Config file, audio settings, start with Windows
+- [x] Settings file applied live, audio settings, start with Windows, app icon, release zip
+- [ ] Settings window (follows the Windows light/dark theme)
+- [ ] Lock screen picture that matches the wallpaper
 - [ ] Measured results: memory, CPU and GPU use, switch gap
 
 ## License
 
-WallFlow is licensed under the [GNU General Public License v3.0](LICENSE). It uses [libmpv](https://mpv.io/), whose Windows builds include FFmpeg compiled with GPL components, so the combined program is GPLv3.
+WallFlow is licensed under the [GNU General Public License v3.0](LICENSE). It uses [libmpv](https://mpv.io/), whose Windows builds include FFmpeg compiled with GPL components, so the combined program is GPLv3. [THIRD_PARTY.md](THIRD_PARTY.md) lists every component, its licence and where to get its exact source.
+
+The dark tray menu uses two functions that `uxtheme.dll` exports only by number (#135 and #136). They are undocumented; if a future Windows removes them, the menu simply stays light.

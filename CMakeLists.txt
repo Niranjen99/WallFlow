@@ -15,6 +15,14 @@ option(WALLFLOW_WERROR "Treat compiler warnings as errors" ON)
 option(WALLFLOW_SANITIZE "Build with AddressSanitizer" OFF)
 option(WALLFLOW_BUILD_TESTS "Build the unit tests" ON)
 
+# The C++ runtime is linked into the exe (/MT), so wallflow.exe runs on a PC without the
+# "Visual C++ Redistributable" installed. Applies to every target, GoogleTest included, so
+# they all match. The ASan build keeps the DLL runtime (/MD), which AddressSanitizer is built
+# around.
+if(NOT WALLFLOW_SANITIZE)
+  set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
+
 if(WALLFLOW_SANITIZE)
   # Applied to every target, GoogleTest included: MSVC refuses to link code built with and
   # without ASan when they pass standard containers to each other.

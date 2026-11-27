@@ -9,9 +9,10 @@ FetchContent_Declare(
 )
 set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
 set(BUILD_GMOCK OFF CACHE BOOL "" FORCE)
-# Use the same C runtime DLL as our code (/MD). Without this GoogleTest links the static one
-# and the linker reports a runtime library mismatch.
-set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+# Use the same C runtime as our code. In the ASan build that is the DLL one (/MD); without
+# this GoogleTest would pick the static one and the linker would report a mismatch. Otherwise
+# CMAKE_MSVC_RUNTIME_LIBRARY (top-level CMakeLists.txt) sets it for every target.
+set(gtest_force_shared_crt ${WALLFLOW_SANITIZE} CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(googletest)
 
 add_executable(wallflow_tests

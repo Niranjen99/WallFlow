@@ -1,0 +1,51 @@
+name: Release
+
+# Pushing a tag such as v0.1.0 builds WallFlow, runs the tests and publishes a GitHub Release
+# with a ready-to-run zip.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write  # needed to create the release
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Puts MSVC (cl, link) and the Windows SDK on PATH, like a Developer Command Prompt.
+      - uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Build
+        run: |
+          cmake --preset release
+          cmake --build --preset release
+
+      - name: Test
+        run: ctest --preset release
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $name = "WallFlow-${{ github.ref_name }}-win64"
+          New-Item -ItemType Directory $name | Out-Null
+          Copy-Item build/release/wallflow.exe, build/release/libmpv-2.dll, LICENSE, README.md, THIRD_PARTY.md $name
+          Compress-Archive -Path $name -DestinationPath "$name.zip"
+          (Get-FileHash "$name.zip" -Algorithm SHA256).Hash.ToLower() + "  $name.zip" | Out-File -Encoding ascii "$name.zip.sha256"
+          "ZIP=$name.zip" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+
+      - name: Publish
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $notes = @"
+          Download **$env:ZIP**, unzip it anywhere and run ``wallflow.exe``. It lives in the system tray; right-click it to edit the settings or quit. See the README for the settings.
+
+          Needs Windows 10 or 11 (64-bit) and a GPU driver (any current NVIDIA, AMD or Intel driver).
+
+          WallFlow is GPLv3. It includes libmpv (with FFmpeg) built by mpv-winbuild-cmake; the exact sources are listed in THIRD_PARTY.md.
+          "@
+          gh release create "${{ github.ref_name }}" "$env:ZIP" "$env:ZIP.sha256" --title "WallFlow ${{ github.ref_name }}" --notes $notes
