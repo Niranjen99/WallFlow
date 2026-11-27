@@ -4,7 +4,7 @@
 
 A lightweight live wallpaper app for Windows: it plays videos behind the desktop icons, rotates through a folder of videos with seamless switches, and pauses whenever a maximized or full-screen window (such as a game) covers the screen.
 
-**Status: work in progress.** WallFlow plays one video behind the desktop icons, decoded on the GPU, and loops it between a start and end point without a black frame or a seek stall. It pauses while a maximized or full-screen window covers the screen, the PC is locked or the display is off, lives in the system tray, and recovers by itself when Explorer restarts. Folder rotation comes next. See the [Roadmap](#roadmap).
+**Status: work in progress.** WallFlow plays videos behind the desktop icons, decoded on the GPU. It loops a video (or a start-to-end part of it), or rotates through a folder, without a black frame or a seek stall at the switch, and notices videos added to or deleted from the folder. It pauses while a maximized or full-screen window covers the screen, the PC is locked or the display is off, lives in the system tray, and recovers by itself when Explorer restarts. The config file and settings window come next. See the [Roadmap](#roadmap).
 
 **Tech stack:** C++20, Win32 API, libmpv (FFmpeg, Direct3D 11), MSVC, CMake, GoogleTest, GitHub Actions.
 
@@ -23,9 +23,10 @@ cmake --build --preset debug
 ctest --preset debug
 build\debug\wallflow.exe "C:\Videos\clip.mp4"
 build\debug\wallflow.exe "C:\Videos\clip.mp4" --start 0:02 --end 0:05
+build\debug\wallflow.exe --folder "C:\Videos" --interval 5:00 --shuffle
 ```
 
-The first configure downloads libmpv (about 32 MB) and checks its SHA-256. For now the video is given on the command line; without one, your normal wallpaper stays. `--start` and `--end` (seconds, `m:ss` or `h:mm:ss.s`) loop only that part of the video; without them the whole video loops. WallFlow runs in the system tray. Right-click its icon and choose **Quit WallFlow** to stop it and get your normal wallpaper back.
+The first configure downloads libmpv (about 32 MB) and checks its SHA-256. For now the video is given on the command line; without one, your normal wallpaper stays. `--start` and `--end` (seconds, `m:ss` or `h:mm:ss.s`) loop only that part of the video; without them the whole video loops. `--folder` rotates through the videos in a folder (not its subfolders): each one plays for at least `--interval` of playing time (default 5 minutes, paused time does not count) and the switch happens at the end of its current loop. `--shuffle` plays them in random order, each once per round. WallFlow runs in the system tray. Right-click its icon and choose **Quit WallFlow** to stop it and get your normal wallpaper back.
 
 Presets: `debug`, `release`, and `asan` (Debug with AddressSanitizer, which CI also runs).
 
@@ -39,8 +40,10 @@ src/
     coverage         the pause rule: is a real window covering the monitor? (pure logic, unit tested)
     loop_range       checks a loop start/end against the video, parses typed times (unit tested)
     command_line     the command-line arguments (unit tested)
+    playlist         folder scan, play order, shuffle without repeats (unit tested)
+    rotation         when to switch and when to preload, on a fake clock in tests (unit tested)
     win/             Win32 code: desktop attachment, wallpaper window, tray icon, window
-                     events, libmpv player, two-player video engine, app
+                     events, libmpv player, two-player video engine, folder watcher, app
 tests/             GoogleTest unit tests (the player tests run headless, on CI too)
 bench/             loop_bench: measures the pause at a loop point, two-player vs mpv's A-B loop
 .github/workflows/ CI: MSVC Debug and AddressSanitizer builds on Windows
@@ -80,7 +83,13 @@ Two details made it reliable:
 - **Which "frame ready" belongs to which seek?** mpv's `playback-restart` event doesn't say which command caused it, and one from an earlier seek can still be queued. Each load and seek gets its own reply id, and a restart only counts once mpv has replied to that command.
 - **A bad loop range never breaks playback.** A start past the end of the file, or a loop shorter than 0.5 s, falls back to the whole video. That can only be checked once the file is loaded and its length is known.
 
-Folder rotation will use the same swap, with the next video in the waiting player.
+Folder rotation uses the same swap, with the next video in the waiting player.
+
+**The waiting player is only loaded when it is needed.** A loaded 4K player holds a pool of decoded frames, so two loaded players double the memory. Instead, a timer loads the waiting player 2 seconds before the loop end, and after the swap the old player unloads and frees its decoder. Because paused time does not count towards the rotation interval, it is already certain 2 seconds early whether the end restarts the loop or switches to the next video, so the right one is loaded. The timer is stopped while paused and re-armed on resume with the real time left. Loops of 4 seconds or less keep both players loaded: there is no time to unload in between.
+
+## How it watches the folder
+
+A background thread waits on `ReadDirectoryChangesW` (overlapped, together with a stop event, so quitting cancels it cleanly). It does not parse what changed: any change posts one message to the UI thread, which rescans the folder 1 second after the last change (copying a file sends many events). New videos join the shuffle round at random places; deleted ones never play again; in order, playback continues after the last video played even if that one was deleted. A video that fails to load is skipped. The first read is issued in the constructor, before the thread starts, because Windows only records changes from the first call on: a unit test caught a file added right after start being missed.
 
 ## Measured so far
 
@@ -94,7 +103,15 @@ Windows 11 build 26300, NVIDIA RTX 3070, 1920x1080 monitor, release build (2026-
 | Memory while playing 4K | 177 MB working set, about 345 MB private; mpv with nothing loaded: 19 MB |
 | Same video decoded on the CPU instead | 61.5% of one core and 681 MB private: why hardware decoding is on |
 
-Almost all of the memory is the decoder's pool of 4K frames (about 12 MB each). A 1080p video needs about a quarter of that. The two-player engine (below) holds two such pools: **694 MB private** with two players for the same 4K video, against about 345 MB with one.
+Almost all of the memory is the decoder's pool of 4K frames (about 12 MB each). A 1080p video needs about a quarter of that. Memory with the two-player engine, same 4K video (24 s long, looping), private memory sampled every 0.5 s for 42 s:
+
+| | Private memory |
+|---|---|
+| One player (before the engine) | about 345 MB |
+| Both players loaded all the time (first engine version) | 694 MB |
+| Waiting player loaded only 2 s before the loop end (now) | 410 MB mean, 348 MB min, 708 MB peak |
+
+The peak lasts the 2-second preload plus about 3 seconds until mpv has freed the old decoder.
 
 **Pause at a loop point**, measured with `bench/loop_bench.exe` (10 loops per video, 4K H.264, GPU decoding, no drawing, so the compositor is not included). Overrun = how much longer a loop took than its length in whole frames, i.e. how long the picture stood still too long:
 
@@ -121,7 +138,7 @@ Set `WALLFLOW_LOG` to a file path before starting WallFlow and it logs what it d
 - [x] Play one video with hardware decoding (libmpv)
 - [x] Pause when a maximized or full-screen window covers the screen, while locked, and while the display is off
 - [x] Two-player engine: loop between a start and end point with no visible gap
-- [ ] Rotate through a folder of videos with seamless switches
+- [x] Rotate through a folder of videos with seamless switches, watch the folder for changes
 - [ ] Config file, audio settings, start with Windows
 - [ ] Measured results: memory, CPU and GPU use, switch gap
 
