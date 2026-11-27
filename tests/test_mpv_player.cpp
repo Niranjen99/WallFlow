@@ -1,14 +1,16 @@
 // MpvPlayer with no video output (window == nullptr), so these run on CI without a screen.
-// The video comes from FFmpeg's lavfi "testsrc" generator, so no media file is needed.
+// The videos come from FFmpeg's lavfi "testsrc" generator, so no media file is needed. The
+// generator cannot seek and has no known length, so tests that need either use test_video().
 
-#include <algorithm>
 #include <chrono>
 #include <condition_variable>
 #include <filesystem>
 #include <functional>
 #include <mutex>
+#include <optional>
 
 #include <gtest/gtest.h>
+#include <mpv/client.h>
 
 #include "wallflow/win/mpv_player.hpp"
 
@@ -58,59 +60,138 @@ private:
 };
 
 constexpr char kTestPattern[] = "av://lavfi:testsrc=size=320x240:rate=30:duration=1";
+constexpr char kLongPattern[] = "av://lavfi:testsrc=size=320x240:rate=30:duration=10";
+constexpr double kOneFrame = 1.0 / 30;
+
+// A real 4-second video file, made once per test run with mpv's own encoder (FFmpeg's mpeg4
+// codec, built into libmpv), so CI needs no media files. Unlike the lavfi generator it has a
+// known length, and keyframes only every 15 frames (0.5 s), so a start between keyframes
+// really tests the exact seek.
+const std::filesystem::path& test_video() {
+    static const std::filesystem::path path = [] {
+        auto file = std::filesystem::temp_directory_path() / "wallflow-test-4s.mkv";
+        mpv_handle* mpv = mpv_create();
+        mpv_set_option_string(mpv, "config", "no");
+        mpv_set_option_string(mpv, "o", file.string().c_str());
+        mpv_set_option_string(mpv, "ovc", "mpeg4");
+        mpv_set_option_string(mpv, "ovcopts", "g=15");
+        mpv_initialize(mpv);
+        const char* command[] = {
+            "loadfile", "av://lavfi:testsrc=size=160x120:rate=30:duration=4", nullptr};
+        mpv_command(mpv, command);
+        for (;;) {  // the encode takes well under a second
+            const mpv_event* event = mpv_wait_event(mpv, 10);
+            if (event->event_id == MPV_EVENT_END_FILE || event->event_id == MPV_EVENT_SHUTDOWN) {
+                break;
+            }
+        }
+        mpv_terminate_destroy(mpv);  // finishes writing the file
+        return file;
+    }();
+    return path;
+}
 
 }  // namespace
 
 TEST(MpvPlayer, PlaysAGeneratedTestVideo) {
     Pump pump;
     MpvPlayer player(nullptr, pump.wakeup());
-    player.play_url(kTestPattern);
+    player.load_url(kTestPattern, {}, false);
 
-    ASSERT_TRUE(pump.run_until(player, [&] { return player.started(); }));
+    ASSERT_TRUE(pump.run_until(player, [&] { return player.ready(); }));
     EXPECT_EQ(player.files_loaded(), 1);
     EXPECT_FALSE(player.last_error().has_value());
 }
 
-TEST(MpvPlayer, LoopsInsteadOfStopping) {
-    // The test pattern is 1 second long. With loop-file=inf, after 1.5 seconds it must still
-    // be playing (position is known) and must have wrapped back below 1 second.
+TEST(MpvPlayer, HoldsTheLastFrameAtTheEnd) {
+    // The test pattern is 1 second long. At the end the file stays loaded and paused.
     Pump pump;
     MpvPlayer player(nullptr, pump.wakeup());
-    player.play_url(kTestPattern);
+    player.load_url(kTestPattern, {}, false);
+
+    ASSERT_TRUE(pump.run_until(player, [&] { return player.at_end(); }, 5s));
+    EXPECT_TRUE(player.paused());
+    ASSERT_TRUE(player.position().has_value()) << "the file was unloaded";
+    EXPECT_GT(*player.position(), 0.9);
+}
+
+TEST(MpvPlayer, PausedLoadShowsTheLoopStart) {
+    Pump pump;
+    MpvPlayer player(nullptr, pump.wakeup());
+    player.load(test_video(), {1.2, std::nullopt}, true);  // keyframes at 1.0 and 1.5
+
+    ASSERT_TRUE(pump.run_until(player, [&] { return player.ready(); }));
+    EXPECT_TRUE(player.paused());
+    ASSERT_TRUE(player.position().has_value());
+    EXPECT_NEAR(*player.position(), 1.2, kOneFrame);  // exact seek, not the keyframe before
+}
+
+TEST(MpvPlayer, StopsAtTheLoopEnd) {
+    Pump pump;
+    MpvPlayer player(nullptr, pump.wakeup());
+    player.load(test_video(), {1.2, 1.8}, false);
+
+    ASSERT_TRUE(pump.run_until(player, [&] { return player.at_end(); }, 5s));
+    ASSERT_TRUE(player.position().has_value());
+    EXPECT_NEAR(*player.position(), 1.8, 2 * kOneFrame);
+}
+
+TEST(MpvPlayer, RewindGoesBackToTheStartAndStaysPaused) {
+    Pump pump;
+    MpvPlayer player(nullptr, pump.wakeup());
+    player.load(test_video(), {1.2, 1.8}, false);
+    ASSERT_TRUE(pump.run_until(player, [&] { return player.at_end(); }, 5s));
+
+    player.rewind();
+    EXPECT_FALSE(player.at_end());
+    ASSERT_TRUE(pump.run_until(player, [&] { return player.ready(); }));
+    EXPECT_TRUE(player.paused());
+    EXPECT_NEAR(*player.position(), 1.2, kOneFrame);
+
+    player.set_paused(false);  // and the loop plays again, to the end
+    EXPECT_TRUE(pump.run_until(player, [&] { return player.at_end(); }, 5s));
+}
+
+TEST(MpvPlayer, StartPastTheEndFallsBackToTheWholeFile) {
+    // 4-second video, loop asked for 5..9 s: only known to be wrong once the file is loaded.
+    Pump pump;
+    MpvPlayer player(nullptr, pump.wakeup());
+    player.load(test_video(), {5.0, 9.0}, true);
     ASSERT_TRUE(pump.run_until(player, [&] { return player.files_loaded() == 1; }));
 
-    bool wrapped = false;
-    double highest = 0;
-    pump.run_until(
-        player,
-        [&] {
-            if (const auto pos = player.position()) {
-                if (*pos + 0.3 < highest) {
-                    wrapped = true;  // position jumped back: the loop restarted
-                }
-                highest = std::max(highest, *pos);
-            }
-            return wrapped;
-        },
-        5s);
-    EXPECT_TRUE(wrapped) << "highest position seen: " << highest;
+    EXPECT_EQ(player.range(), (wallflow::LoopRange{0, std::nullopt}));
+    ASSERT_TRUE(pump.run_until(player, [&] { return player.ready(); }));
+    EXPECT_NEAR(*player.position(), 0.0, kOneFrame);
+}
+
+TEST(MpvPlayer, LoopEndIsCheckedAgainstTheRealLength) {
+    // 3.8..10 s on a 4-second video: the start is valid, but only 0.2 s are left (too short).
+    Pump pump;
+    MpvPlayer player(nullptr, pump.wakeup());
+    player.load(test_video(), {3.8, 10.0}, false);
+    ASSERT_TRUE(pump.run_until(player, [&] { return player.files_loaded() == 1; }));
+    EXPECT_EQ(player.range(), (wallflow::LoopRange{0, std::nullopt}));
+
+    // The end set at load time (10 s) was cleared: it plays to the real end, from 0.
+    ASSERT_TRUE(pump.run_until(player, [&] { return player.at_end(); }, 10s));
+    EXPECT_NEAR(*player.position(), 4.0, 2 * kOneFrame);
 }
 
 TEST(MpvPlayer, MissingFileReportsAnError) {
     Pump pump;
     MpvPlayer player(nullptr, pump.wakeup());
-    player.play(std::filesystem::temp_directory_path() / L"wallflow-no-such-file-é.mp4");
+    player.load(std::filesystem::temp_directory_path() / L"wallflow-no-such-file-é.mp4", {}, false);
 
     ASSERT_TRUE(pump.run_until(player, [&] { return player.last_error().has_value(); }));
     EXPECT_EQ(player.files_loaded(), 0);
-    EXPECT_FALSE(player.started());  // the window would stay hidden: normal wallpaper remains
+    EXPECT_FALSE(player.ready());  // the window would stay hidden: normal wallpaper remains
 }
 
 TEST(MpvPlayer, PauseStopsThePosition) {
     Pump pump;
     MpvPlayer player(nullptr, pump.wakeup());
-    player.play_url("av://lavfi:testsrc=size=320x240:rate=30:duration=10");
-    ASSERT_TRUE(pump.run_until(player, [&] { return player.started(); }));
+    player.load_url(kLongPattern, {}, false);
+    ASSERT_TRUE(pump.run_until(player, [&] { return player.ready(); }));
 
     player.set_paused(true);
     ASSERT_TRUE(pump.run_until(player, [&] { return player.paused(); }));

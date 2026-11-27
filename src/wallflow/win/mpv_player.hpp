@@ -2,11 +2,14 @@
 
 #include <windows.h>
 
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <memory>
 #include <optional>
 #include <string>
+
+#include "wallflow/loop_range.hpp"
 
 struct mpv_handle;  // from <mpv/client.h>; declared here so users of this header don't need it
 
@@ -27,11 +30,21 @@ public:
     MpvPlayer(const MpvPlayer&) = delete;
     MpvPlayer& operator=(const MpvPlayer&) = delete;
 
-    // Starts playing `file` in an endless loop, muted, filling the window.
-    void play(const std::filesystem::path& file);
+    // Loads `file` and plays the `loop` part of it: starts at loop.start (an exact seek, not
+    // the nearest keyframe) and stops at loop.end, or at the end of the file. At the end mpv does
+    // not unload the file: it pauses on the last frame and at_end() becomes true, so the
+    // picture never goes black. `paused` = load and show the first frame, but do not play.
+    //
+    // The range is checked against the video's real length once the file is loaded (see
+    // resolve_loop); range() then returns what is actually played.
+    void load(const std::filesystem::path& file, const LoopSetting& loop, bool paused);
 
-    // Plays an mpv URL such as "av://lavfi:testsrc" (a generated test pattern).
-    void play_url(const std::string& url);
+    // Same with an mpv URL such as "av://lavfi:testsrc" (a generated test pattern).
+    void load_url(const std::string& url, const LoopSetting& loop, bool paused);
+
+    // Goes back to the start of the range (exact seek). The pause state does not change, so a
+    // player that reached the end stays paused on the start frame until set_paused(false).
+    void rewind();
 
     // Pauses or resumes playback. While paused mpv decodes nothing; the last frame stays shown.
     void set_paused(bool paused);
@@ -40,13 +53,20 @@ public:
     // Handles every waiting event without blocking.
     void process_events();
 
-    // How many files have finished loading, and the last playback error (if any).
+    // How many files have finished loading.
     [[nodiscard]] int files_loaded() const noexcept { return files_loaded_; }
 
-    // True once playback has really started (mpv's playback-restart event): the first frame
-    // is ready, so the window can be shown without flashing.
-    [[nodiscard]] bool started() const noexcept { return started_; }
+    // True once the frame at the target position is on screen, after load() or rewind()
+    // (mpv's playback-restart event). Until then the window would show an old or empty frame.
+    [[nodiscard]] bool ready() const noexcept { return ready_; }
+
+    // True while the player is held on the last frame of the range.
+    [[nodiscard]] bool at_end() const noexcept { return at_end_; }
+
     [[nodiscard]] const std::optional<std::string>& last_error() const noexcept { return last_error_; }
+
+    // The range being played (valid once files_loaded() > 0).
+    [[nodiscard]] const LoopRange& range() const noexcept { return range_; }
 
     // Current playback position in seconds, if a file is playing.
     [[nodiscard]] std::optional<double> position() const;
@@ -56,10 +76,20 @@ private:
         void operator()(mpv_handle* mpv) const noexcept;
     };
 
+    void on_file_loaded();
+    // Sends a command that moves playback (load or seek); see ready().
+    void send_target_command(const char** command);
+
     std::unique_ptr<mpv_handle, Destroy> mpv_;
     std::function<void()> wakeup_;
     int files_loaded_ = 0;
-    bool started_ = false;
+    bool ready_ = false;
+    std::uint64_t last_id_ = 0;    // ids for async commands; 0 = "no id"
+    std::uint64_t target_id_ = 0;  // the last load/seek
+    bool target_confirmed_ = false;  // mpv has replied to it
+    bool at_end_ = false;
+    LoopSetting setting_;  // what load() was asked for
+    LoopRange range_;      // what is played
     std::optional<std::string> last_error_;
 };
 

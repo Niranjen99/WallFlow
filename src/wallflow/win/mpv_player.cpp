@@ -3,6 +3,7 @@
 #include <mpv/client.h>
 
 #include <cstdint>
+#include <format>
 #include <stdexcept>
 #include <string_view>
 
@@ -35,7 +36,12 @@ MpvPlayer::MpvPlayer(HWND window, std::function<void()> wakeup)
     set_option(mpv, "idle", "yes");     // stay alive with nothing loaded
     set_option(mpv, "hwdec", "auto-safe");  // decode on the GPU where it is known to work
     set_option(mpv, "aid", "no");       // no audio track at all: not even decoded (a setting later)
-    set_option(mpv, "loop-file", "inf");
+    // At the end of the file (or of the loop range) keep the last frame on screen, paused,
+    // instead of unloading. The app decides what comes next; mpv never shows black.
+    set_option(mpv, "keep-open", "always");
+    // Seeks land on the exact frame asked for, not the keyframe before it. A loop start is
+    // usually between keyframes.
+    set_option(mpv, "hr-seek", "yes");
     set_option(mpv, "panscan", "1.0");  // fill the screen; crop instead of black bars
     set_option(mpv, "osd-level", "0");  // no on-screen text
     set_option(mpv, "input-default-bindings", "no");  // keys and mouse do nothing
@@ -69,6 +75,10 @@ MpvPlayer::MpvPlayer(HWND window, std::function<void()> wakeup)
     // GWLP_USERDATA for windows.
     mpv_set_wakeup_callback(
         mpv, [](void* self) { static_cast<MpvPlayer*>(self)->wakeup_(); }, this);
+
+    // mpv sends a property-change event whenever "eof-reached" changes, so the end of the
+    // range arrives as an event, not by polling the position.
+    mpv_observe_property(mpv, 0, "eof-reached", MPV_FORMAT_FLAG);
 }
 
 MpvPlayer::~MpvPlayer() {
@@ -78,19 +88,71 @@ MpvPlayer::~MpvPlayer() {
     }
 }
 
-void MpvPlayer::play(const std::filesystem::path& file) {
+void MpvPlayer::load(const std::filesystem::path& file, const LoopSetting& loop, bool paused) {
     // mpv takes UTF-8. A Windows path is UTF-16 inside std::filesystem::path; u8string()
     // converts it. C++20 returns std::u8string (char8_t), so the bytes are re-read as char.
     const std::u8string utf8 = file.u8string();
-    play_url(std::string(reinterpret_cast<const char*>(utf8.data()), utf8.size()));
+    load_url(std::string(reinterpret_cast<const char*>(utf8.data()), utf8.size()), loop, paused);
 }
 
-void MpvPlayer::play_url(const std::string& url) {
+void MpvPlayer::load_url(const std::string& url, const LoopSetting& loop, bool paused) {
     last_error_.reset();
-    started_ = false;
-    const char* command[] = {"loadfile", url.c_str(), "replace", nullptr};
-    // mpv_command_async queues the command and returns at once; the result arrives as an event.
-    mpv_command_async(mpv_.get(), 0, command);
+    ready_ = false;
+    at_end_ = false;
+    setting_ = loop;
+    // The length is not known yet: check what can be checked now, the rest in on_file_loaded().
+    range_ = resolve_loop(loop, std::nullopt);
+
+    // Per-file options travel with the loadfile command, so the very first frame decoded is
+    // already the loop start (no flash of frame 0). std::format prints doubles the same way
+    // on every PC (no locale), with no rounding.
+    std::string options = std::format("start={}", range_.start);
+    if (range_.end) {
+        options += std::format(",end={}", *range_.end);
+    }
+    // Requests on one mpv handle run in order, so the pause is in place before the load.
+    set_paused(paused);
+    // loadfile <url> <flags> <index> <options>; index -1 = not used (only for "insert-at").
+    const char* command[] = {"loadfile", url.c_str(), "replace", "-1", options.c_str(), nullptr};
+    send_target_command(command);
+}
+
+void MpvPlayer::send_target_command(const char** command) {
+    // A playback-restart event says "the frame at the new position is on screen", but it does
+    // not say which command it belongs to: one from an earlier seek may still be waiting in
+    // the queue. So each load/seek gets its own id, and restarts count only after mpv has
+    // replied to that command (mpv handles commands, and queues their events, in order).
+    ready_ = false;
+    target_confirmed_ = false;
+    target_id_ = ++last_id_;
+    // mpv_command_async queues the command and returns at once; the reply arrives as an event
+    // carrying the id passed here.
+    mpv_command_async(mpv_.get(), target_id_, command);
+}
+
+void MpvPlayer::on_file_loaded() {
+    double duration = 0;
+    std::optional<double> known;
+    if (mpv_get_property(mpv_.get(), "duration", MPV_FORMAT_DOUBLE, &duration) >= 0) {
+        known = duration;
+    }
+    const LoopRange checked = resolve_loop(setting_, known);
+    if (checked == range_) {
+        return;
+    }
+    // Only a start at or near the end of the file gets here. Fall back to the whole file:
+    // clear the end and jump to the start. The wrong frame may show for an instant; this only
+    // happens with a bad setting.
+    range_ = checked;
+    mpv_set_property_string(mpv_.get(), "file-local-options/end", "none");
+    rewind();
+}
+
+void MpvPlayer::rewind() {
+    at_end_ = false;
+    const std::string target = std::format("{}", range_.start);
+    const char* command[] = {"seek", target.c_str(), "absolute+exact", nullptr};
+    send_target_command(command);
 }
 
 void MpvPlayer::set_paused(bool paused) {
@@ -114,10 +176,23 @@ void MpvPlayer::process_events() {
                 return;
             case MPV_EVENT_FILE_LOADED:
                 ++files_loaded_;
+                on_file_loaded();
                 break;
             case MPV_EVENT_PLAYBACK_RESTART:
-                started_ = true;
+                if (target_confirmed_) {
+                    ready_ = true;
+                }
                 break;
+            case MPV_EVENT_PROPERTY_CHANGE: {
+                // data points at an mpv_event_property that mpv owns until the next
+                // mpv_wait_event call. Its data is null when the value is unavailable (no file).
+                const auto* prop = static_cast<const mpv_event_property*>(event->data);
+                if (std::string_view(prop->name) == "eof-reached") {
+                    at_end_ = prop->format == MPV_FORMAT_FLAG &&
+                              *static_cast<const int*>(prop->data) != 0;
+                }
+                break;
+            }
             case MPV_EVENT_END_FILE: {
                 const auto* end = static_cast<const mpv_event_end_file*>(event->data);
                 if (end->reason == MPV_END_FILE_REASON_ERROR) {
@@ -126,6 +201,9 @@ void MpvPlayer::process_events() {
                 break;
             }
             case MPV_EVENT_COMMAND_REPLY:
+                if (event->reply_userdata == target_id_) {
+                    target_confirmed_ = true;
+                }
                 if (event->error < 0) {
                     last_error_ = mpv_error_string(event->error);
                 }

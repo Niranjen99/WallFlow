@@ -131,11 +131,10 @@ void App::start_player() {
     try {
         player_ = std::make_unique<MpvPlayer>(
             wallpaper_->hwnd(), [controller] { ::PostMessageW(controller, kPlayerMessage, 0, 0); });
-        // A new player starts playing; if it should be paused right now (e.g. Explorer
-        // restarted while a game runs), pause it before the file loads.
-        paused_ = false;
-        update_pause();
-        player_->play(video_);
+        // If it should be paused right now (e.g. Explorer restarted while a game runs), it
+        // loads paused: the first frame is shown, nothing more is decoded.
+        paused_ = covered_ || locked_ || display_off_;
+        player_->load(video_, {}, paused_);
         log(L"loading " + video_.wstring());
     } catch (const std::exception& e) {
         player_.reset();
@@ -200,7 +199,12 @@ LRESULT App::on_message(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
         case kPlayerMessage:
             if (player_) {
                 player_->process_events();
-                if (player_->started() && wallpaper_ && !wallpaper_->revealed()) {
+                if (player_->at_end()) {
+                    // Simple loop for now (one player: the seek back may stall briefly).
+                    player_->rewind();
+                    player_->set_paused(paused_);
+                }
+                if (player_->ready() && wallpaper_ && !wallpaper_->revealed()) {
                     wallpaper_->reveal();
                     log(L"first frame ready: wallpaper revealed");
                 }
