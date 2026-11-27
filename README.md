@@ -26,6 +26,10 @@ Get the zip from the [latest release](https://github.com/Niranjen99/WallFlow/rel
 
 Pick a folder, set how many seconds each video plays, shuffle, mute or volume, and start with Windows. Pick a video in the list to give it its own loop: type its start and end in seconds (`2`, `4.5`) or as `1:30`. Nothing changes until you click **Apply** (or press Enter); a typo is shown in red and nothing is applied. Closing with changes not applied asks whether to apply them. Hover over the loop fields for a note on memory: a loop of 4 seconds or less keeps a second video player loaded all the time.
 
+Volume and mute are heard as soon as you change them (closing without Apply puts the old sound back). A click on the volume track jumps straight to that point.
+
+**Play only this video** loops the selected video forever: no rotation, no shuffle (both grey out). Turn it off, or delete that file from the folder, and the folder rotates again.
+
 **Preview** shows the selected video on the desktop right away, with the loop and decoding you set but have not applied yet. The folder rotation stops while you look; **Apply** or closing the window brings it back.
 
 **Compatible decoding** (per video): turn it on for a video that shows blocks of wrong colours. See [A driver bug: corrupted blocks at the bottom](#a-driver-bug-corrupted-blocks-at-the-bottom).
@@ -57,6 +61,7 @@ The first start creates `%APPDATA%\WallFlow\settings.json`. Save it and WallFlow
 | `shuffle` | Random order, each video once per round, never the same one twice in a row. | `false` |
 | `mute`, `volume` | Muted means the audio is not even decoded. Volume 0 to 100. | `true`, `50` |
 | `start_with_windows` | Start when you log in (current user only, no admin rights). | `false` |
+| `only_video` | File name of the one video to play, looping, with no rotation. Ignored if that file is not in the folder. | not set: rotate |
 | `videos` | Per-video settings by file name: loop `start`, `end` or both, as seconds (`90`) or text (`"1:30"`); `compatible_decoding` decodes the video with Vulkan instead of DirectX. | whole video, DirectX |
 | `lock_screen_picture` | Reserved for the lock screen feature (not active yet). | `false` |
 
@@ -154,6 +159,8 @@ Folder rotation uses the same swap, with the next video in the waiting player.
 - **Plain Win32, laid out in code.** No UI framework: the exe stays under 1 MB with no extra DLLs. Every position is written at 96 DPI and scaled with the monitor's DPI, and dragging the window to a monitor with other scaling lays it out again (`WM_DPICHANGED`).
 - **Light and dark.** The title bar uses the documented `DWMWA_USE_IMMERSIVE_DARK_MODE`. Buttons, text fields, the list and its scrollbars use the dark theme classes Windows ships for File Explorer (`DarkMode_Explorer`, `DarkMode_CFD`, `DarkMode_ItemsView`). Colours come from answering `WM_CTLCOLOR*`. A standard checkbox ignores the text colour in dark mode, so the switches are owner-drawn (`BS_OWNERDRAW`), and the volume slider is custom-drawn (`NM_CUSTOMDRAW`). A light/dark change arrives as `WM_SETTINGCHANGE` with `"ImmersiveColorSet"`, and the window repaints in the new theme.
 - **One path for every change.** The window keeps two copies of the settings: what WallFlow uses now, and what the window shows with your edits. Apply checks the fields and hands the edited copy to the app. The app saves it to settings.json and applies it through the same code as a hand edit, so a new loop or folder still switches seamlessly. The folder watcher then reports that write, but the file matches what is already applied, so nothing happens twice.
+- **Smooth switches.** GDI draws curves without anti-aliasing (each pixel is either in or out, so edges look stair-stepped), so the switches and the volume knob are drawn with GDI+ in `SmoothingModeAntiAlias`, which blends edge pixels with the background.
+- **The slider repaints fully.** A standard slider repaints only where its knob was and is. Because the track is coloured up to the knob, a jump left the old colour behind, so every change repaints the whole control.
 - **The logic is testable.** What a typed time means, when a loop is too short, and how an edit changes the settings live in `settings_form`, with no window, so they are unit tested.
 - **A bug found while testing.** Quitting from the tray while the folder picker was open left WallFlow running with no windows. The picker runs its own message loop, which swallowed the `WM_QUIT` that ends the main loop. Now quitting closes the picker (`IFileDialog::Close`), and the main loop also stops on a flag set when the controller window is destroyed, so a swallowed `WM_QUIT` can't leave it waiting forever.
 
@@ -236,6 +243,7 @@ Set `WALLFLOW_LOG` to a file path before starting WallFlow and it logs what it d
 - [x] Settings file applied live, audio settings, start with Windows, app icon, release zip
 - [x] Settings window (follows the Windows light/dark theme live)
 - [x] Preview a video before applying; per-video compatible decoding for GPU driver bugs
+- [x] Play only one video; live volume and mute
 - [ ] Lock screen picture that matches the wallpaper
 - [ ] Measured results: memory, CPU and GPU use, switch gap
 
