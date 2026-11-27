@@ -20,6 +20,7 @@ add_executable(wallflow_tests
   test_coverage.cpp
   test_loop_range.cpp
   test_command_line.cpp
+  test_playlist.cpp
   test_mpv_player.cpp
 )
 target_link_libraries(wallflow_tests PRIVATE wallflow_core GTest::gtest_main)
