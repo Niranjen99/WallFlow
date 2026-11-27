@@ -491,7 +491,18 @@ void SettingsWindow::fill_from_settings() {
 }
 
 void SettingsWindow::update_apply_button() {
-    ::EnableWindow(apply_, settings_ != applied_);
+    ::EnableWindow(apply_, settings_ != applied_ || fields_edited());
+}
+
+bool SettingsWindow::fields_edited() const {
+    // Text typed into a field counts as a change before the field is left: otherwise Apply
+    // stays greyed out while typing, and a click on a disabled button does not even move the
+    // focus out of the field. apply() checks and stores the fields first.
+    if (text_of(interval_) != seconds_text(settings_.interval)) {
+        return true;
+    }
+    const int row = selected_row();
+    return row >= 0 && (text_of(loop_start_) != rows_[row].start || text_of(loop_end_) != rows_[row].end);
 }
 
 void SettingsWindow::fill_video_list() {
@@ -644,12 +655,16 @@ void SettingsWindow::on_command(int id, int code) {
         case kInterval:
             if (code == EN_KILLFOCUS) {
                 commit_interval();
+            } else if (code == EN_CHANGE) {
+                update_apply_button();
             }
             break;
         case kLoopStart:
         case kLoopEnd:
             if (code == EN_KILLFOCUS) {
                 ::PostMessageW(hwnd_, kLoopFocusMessage, 0, 0);
+            } else if (code == EN_CHANGE) {
+                update_apply_button();
             }
             break;
         case kWholeVideo:

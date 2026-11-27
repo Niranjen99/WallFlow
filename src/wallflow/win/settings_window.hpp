@@ -92,6 +92,8 @@ private:
     bool apply();
     void close_asking();
     void update_apply_button();
+    // A text field holds something other than what the settings say (typed, not left yet).
+    [[nodiscard]] bool fields_edited() const;
     void clear_loop();
     void preview();
     // Greys out the interval and shuffle while one video plays alone (they do nothing then).
