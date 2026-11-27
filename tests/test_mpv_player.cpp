@@ -212,6 +212,21 @@ TEST(MpvPlayer, UnloadsAndLoadsAgain) {
     EXPECT_NEAR(*player.position(), 2.0, kOneFrame);
 }
 
+TEST(MpvPlayer, MutedByDefaultAudioCanBeTurnedOn) {
+    Pump pump;
+    MpvPlayer player(nullptr, pump.wakeup());
+    EXPECT_EQ(player.property("aid"), "no");  // not even decoded
+
+    player.set_audio(false, 35);
+    EXPECT_EQ(player.property("aid"), "auto");
+    EXPECT_EQ(player.property("volume"), "35.000000");
+
+    player.set_audio(true, 35);
+    EXPECT_EQ(player.property("aid"), "no");
+    player.set_audio(false, 250);  // out of range: clamped
+    EXPECT_EQ(player.property("volume"), "100.000000");
+}
+
 TEST(MpvPlayer, MissingFileReportsAnError) {
     Pump pump;
     MpvPlayer player(nullptr, pump.wakeup());

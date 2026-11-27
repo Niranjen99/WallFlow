@@ -67,6 +67,9 @@ void VideoEngine::play(const VideoSource& first, bool paused, std::optional<doub
                 });
         }
     }
+    for (Slot& slot : slots_) {
+        slot.player->set_audio(muted_, volume_);
+    }
     paused_ = paused;
     playing_ = true;
     rotation_ = Rotation(next ? interval : std::nullopt);
@@ -92,6 +95,16 @@ void VideoEngine::set_paused(bool paused) {
         timer_armed_ = false;
     } else if (!waiting().video && shown().player->ready()) {
         arm_preload();
+    }
+}
+
+void VideoEngine::set_audio(bool muted, int volume) {
+    muted_ = muted;
+    volume_ = volume;
+    for (Slot& slot : slots_) {
+        if (slot.player) {
+            slot.player->set_audio(muted, volume);
+        }
     }
 }
 

@@ -48,6 +48,14 @@ public:
 
     // Pauses or resumes playback. While paused mpv decodes nothing; the last frame stays shown.
     void set_paused(bool paused);
+
+    // Muted: no audio track at all (not even decoded). Otherwise the video's audio at
+    // `volume` (0 to 100). Applies now and to every file loaded later.
+    void set_audio(bool muted, int volume);
+
+    // Any mpv property as text, e.g. "aid" or "volume"; nothing if it is unavailable.
+    // For tests and troubleshooting.
+    [[nodiscard]] std::optional<std::string> property(const char* name) const;
     [[nodiscard]] bool paused() const;
 
     // Handles every waiting event without blocking.

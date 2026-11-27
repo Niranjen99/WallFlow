@@ -35,7 +35,7 @@ MpvPlayer::MpvPlayer(HWND window, std::function<void()> wakeup)
     set_option(mpv, "terminal", "no");  // no console output
     set_option(mpv, "idle", "yes");     // stay alive with nothing loaded
     set_option(mpv, "hwdec", "auto-safe");  // decode on the GPU where it is known to work
-    set_option(mpv, "aid", "no");       // no audio track at all: not even decoded (a setting later)
+    set_option(mpv, "aid", "no");       // muted by default: no audio track at all (set_audio)
     // At the end of the file (or of the loop range) keep the last frame on screen, paused,
     // instead of unloading. The app decides what comes next; mpv never shows black.
     set_option(mpv, "keep-open", "always");
@@ -163,6 +163,25 @@ void MpvPlayer::set_paused(bool paused) {
     // returning, so pointing at a local variable is fine.
     int flag = paused ? 1 : 0;
     mpv_set_property_async(mpv_.get(), 0, "pause", MPV_FORMAT_FLAG, &flag);
+}
+
+void MpvPlayer::set_audio(bool muted, int volume) {
+    // "aid" chooses the audio track: "no" = none (nothing decoded, cheaper than volume 0),
+    // "auto" = the file's default track. Setting it while a file plays switches at once.
+    mpv_set_property_string(mpv_.get(), "aid", muted ? "no" : "auto");
+    const std::string level = std::to_string(volume < 0 ? 0 : (volume > 100 ? 100 : volume));
+    mpv_set_property_string(mpv_.get(), "volume", level.c_str());
+}
+
+std::optional<std::string> MpvPlayer::property(const char* name) const {
+    // mpv allocates the returned string; mpv_free releases it.
+    char* value = mpv_get_property_string(mpv_.get(), name);
+    if (value == nullptr) {
+        return std::nullopt;
+    }
+    std::string text(value);
+    mpv_free(value);
+    return text;
 }
 
 bool MpvPlayer::paused() const {

@@ -59,6 +59,8 @@ private:
     void load_settings();
     void apply_settings(const Settings& changed);
     void edit_settings();
+    // Settings that apply whatever plays: audio, start with Windows.
+    void apply_general_settings();
 
     // Pause rule: re-checks whether a window covers the monitor, then applies all reasons.
     void check_coverage();

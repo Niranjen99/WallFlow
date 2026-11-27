@@ -65,6 +65,9 @@ public:
     // Pauses or resumes what is on screen. The waiting player always stays paused.
     void set_paused(bool paused);
 
+    // Audio for both players, now and for every video after (see MpvPlayer::set_audio).
+    void set_audio(bool muted, int volume);
+
     // Changes the rotation while playing (settings changed). The time played so far counts.
     void set_rotation(std::optional<double> interval, NextVideo next);
 
@@ -109,6 +112,8 @@ private:
     bool timer_armed_ = false;
     bool waiting_is_switch_ = false;  // the waiting player holds the next video
     bool switch_now_ = false;         // swap as soon as the waiting player is ready
+    bool muted_ = true;
+    int volume_ = 50;
     int failures_ = 0;       // videos in a row that failed to load
     bool gave_up_ = false;   // nothing playable: stop trying
     Rotation rotation_{std::nullopt};

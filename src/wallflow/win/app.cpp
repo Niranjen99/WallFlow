@@ -9,6 +9,7 @@
 #include <string>
 
 #include "wallflow/coverage.hpp"
+#include "wallflow/win/autostart.hpp"
 #include "wallflow/win/log.hpp"
 #include "wallflow/win/settings_file.hpp"
 
@@ -23,7 +24,8 @@ constexpr UINT kFolderMessage = WM_APP + 3;  // something changed in the video f
 constexpr UINT kSettingsMessage = WM_APP + 4;  // something changed in %APPDATA%\WallFlow
 constexpr UINT_PTR kAttachTimer = 1;
 constexpr UINT kAttachRetryMs = 500;
-constexpr int kMaxAttachAttempts = 20;  // 10 seconds
+// 60 seconds: when WallFlow starts with Windows, Explorer may still be busy logging in.
+constexpr int kMaxAttachAttempts = 120;
 constexpr UINT_PTR kCoverageTimer = 2;
 constexpr UINT_PTR kPreloadTimer = 3;  // the engine's "load the next video now"
 constexpr UINT_PTR kFolderTimer = 4;
@@ -119,6 +121,7 @@ void App::start_wallpaper() {
     // After an Explorer restart the old windows are usually already gone.
     engine_.reset();
     engine_ = std::make_unique<VideoEngine>(instance_, hwnd_, kPlayerMessage, kPreloadTimer);
+    engine_->set_audio(settings_.mute, settings_.volume);
     engine_playing_ = false;
     attach_attempts_ = 0;
     try_attach();
@@ -257,6 +260,7 @@ void App::load_settings() {
         if (!write_text_file(settings_file_, settings_to_json(settings_))) {
             log(L"could not write the settings file");
         }
+        apply_general_settings();
         return;
     }
     const ParsedSettings parsed = parse_settings(*text);
@@ -273,6 +277,8 @@ void App::load_settings() {
 void App::apply_settings(const Settings& changed) {
     // std::exchange: settings_ becomes `changed`, and `old` gets what settings_ was before.
     const Settings old = std::exchange(settings_, changed);
+    // Also on an unchanged file: at start this puts the exe's current path in the Run key.
+    apply_general_settings();
     if (old == changed) {
         return;  // e.g. the file was saved without changes
     }
@@ -300,6 +306,23 @@ void App::apply_settings(const Settings& changed) {
             if (loop != now_playing->loop) {
                 engine_->switch_now({now_playing->file, loop});
             }
+        }
+    }
+}
+
+void App::apply_general_settings() {
+    if (engine_) {
+        engine_->set_audio(settings_.mute, settings_.volume);
+    }
+    // Registered with this exe's path every time, so moving WallFlow keeps autostart working.
+    const std::wstring command = own_command_line();
+    const auto registered = autostart_command(L"WallFlow");
+    const bool want = settings_.start_with_windows;
+    if (want != registered.has_value() || (want && *registered != command)) {
+        if (set_autostart(L"WallFlow", command, want)) {
+            log(want ? L"start with Windows: on" : L"start with Windows: off");
+        } else {
+            log(L"could not change start with Windows");
         }
     }
 }
