@@ -68,6 +68,11 @@ add_executable(wallflow WIN32 src/main.cpp)
 target_link_libraries(wallflow PRIVATE wallflow_core)
 wallflow_copy_libmpv(wallflow)
 
+# Loop-point benchmark (console program, needs a real video file to run).
+add_executable(loop_bench bench/loop_bench.cpp)
+target_link_libraries(loop_bench PRIVATE wallflow_core)
+wallflow_copy_libmpv(loop_bench)
+
 if(WALLFLOW_BUILD_TESTS)
   enable_testing()
   add_subdirectory(tests)
