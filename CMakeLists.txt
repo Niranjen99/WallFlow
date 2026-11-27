@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.25)
 
-project(WallFlow VERSION 0.3.0 LANGUAGES CXX)
+project(WallFlow VERSION 0.3.1 LANGUAGES CXX)
 
 if(NOT WIN32 OR NOT MSVC)
   message(FATAL_ERROR "WallFlow is a Windows application and is built with MSVC.")
@@ -79,7 +79,7 @@ add_library(wallflow_core
 target_include_directories(wallflow_core PUBLIC src)
 target_compile_definitions(wallflow_core PRIVATE WALLFLOW_VERSION="${PROJECT_VERSION}")
 # dwmapi: DwmGetWindowAttribute (cloaked windows). wtsapi32: lock/unlock notifications.
-target_link_libraries(wallflow_core PUBLIC wallflow_options libmpv dwmapi wtsapi32 shell32 ole32 advapi32 comctl32 uxtheme)
+target_link_libraries(wallflow_core PUBLIC wallflow_options libmpv dwmapi wtsapi32 shell32 ole32 advapi32 comctl32 uxtheme gdiplus)
 target_link_libraries(wallflow_core PRIVATE nlohmann_json::nlohmann_json)
 
 # The exe's resources: icon and version info. configure_file fills in the version and the

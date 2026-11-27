@@ -8,8 +8,17 @@
 #include <algorithm>
 #include <filesystem>
 #include <optional>
+#include <string>
+
+// GDI+ uses unqualified min/max, which NOMINMAX removes from <windows.h>: give it std's.
+namespace Gdiplus {
+using std::max;
+using std::min;
+}  // namespace Gdiplus
+#include <gdiplus.h>
 
 #include "wallflow/playlist.hpp"
+#include "wallflow/version.hpp"
 #include "wallflow/win/theme.hpp"
 
 namespace wallflow::win {
@@ -20,6 +29,17 @@ constexpr wchar_t kClassName[] = L"WallFlow.Settings";
 // Sent to ourselves after a loop field loses focus: by then the focus has moved, so we can
 // tell "moved to the other loop field" (do not apply half a loop yet) from "left the loop".
 constexpr UINT kLoopFocusMessage = WM_APP + 1;
+
+Gdiplus::Color to_gdiplus(COLORREF color) {
+    return Gdiplus::Color(255, GetRValue(color), GetGValue(color), GetBValue(color));
+}
+
+// GDI draws curves without anti-aliasing (stair-stepped edges); GDI+ smooths them.
+// PixelOffsetModeHalf puts pixel centres at x.5, so shapes on whole coordinates stay sharp.
+void smooth(Gdiplus::Graphics& g) {
+    g.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+    g.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHalf);
+}
 
 enum ControlId : int {
     kFolder = 100,
@@ -117,6 +137,10 @@ SettingsWindow::SettingsWindow(HINSTANCE instance, ChangeHandler on_change, Acti
     INITCOMMONCONTROLSEX controls{sizeof controls, ICC_LISTVIEW_CLASSES | ICC_BAR_CLASSES | ICC_TAB_CLASSES};
     ::InitCommonControlsEx(&controls);
 
+    // GDI+ needs a session open while it draws; it is closed in the destructor.
+    const Gdiplus::GdiplusStartupInput gdiplus_input;
+    Gdiplus::GdiplusStartup(&gdiplus_, &gdiplus_input, nullptr);
+
     big_icon_ = load_app_icon(::GetSystemMetrics(SM_CXICON));
     small_icon_ = load_app_icon(::GetSystemMetrics(SM_CXSMICON));
 
@@ -136,6 +160,9 @@ SettingsWindow::~SettingsWindow() {
         ::DestroyWindow(hwnd_);
     }
     ::UnregisterClassW(kClassName, instance_);
+    if (gdiplus_ != 0) {
+        Gdiplus::GdiplusShutdown(gdiplus_);  // after the window is gone: nothing draws any more
+    }
     for (HICON icon : {big_icon_, small_icon_}) {
         if (icon != nullptr) {
             ::DestroyIcon(icon);
@@ -310,6 +337,7 @@ void SettingsWindow::create_controls() {
                      label);
     status_ = add(WC_STATICW, L"", label);
     open_file_button_ = add(WC_BUTTONW, L"Open settings file", BS_PUSHBUTTON | WS_TABSTOP, kOpenFile);
+    version_ = add(WC_STATICW, (L"Version " + std::wstring(version())).c_str(), label);
     apply_ = add(WC_BUTTONW, L"Apply", BS_PUSHBUTTON | WS_TABSTOP, kApply);
     close_ = add(WC_BUTTONW, L"Close", BS_PUSHBUTTON | WS_TABSTOP, kClose);
 
@@ -386,6 +414,7 @@ void SettingsWindow::layout() {
 
     place(status_, m, 554, right - m, 22);
     place(open_file_button_, m, 592, 150, 30);
+    place(version_, m + 162, 597, 120, 22);
     place(apply_, right - 96 - 10 - 96, 592, 96, 30);
     place(close_, right - 96, 592, 96, 30);
 
@@ -762,23 +791,32 @@ void SettingsWindow::draw_toggle(const DRAWITEMSTRUCT& item) {
 
     const COLORREF accent = disabled ? palette_.track : palette_.accent;
     const COLORREF line = disabled ? palette_.track : palette_.secondary;
-    UniqueGdi<HBRUSH> fill(::CreateSolidBrush(on ? accent : palette_.background));
-    UniqueGdi<HPEN> outline(::CreatePen(PS_SOLID, scale(1), on ? accent : line));
-    HGDIOBJ old_brush = ::SelectObject(dc, fill.get());
-    HGDIOBJ old_pen = ::SelectObject(dc, outline.get());
-    ::RoundRect(dc, pill.left, pill.top, pill.right, pill.bottom, height, height);
+    {
+        Gdiplus::Graphics g(dc);
+        smooth(g);
+        // The outline is centred on the path: inset by half its width so it stays inside.
+        const float pen = static_cast<float>(std::max(1, scale(1)));
+        const float x = static_cast<float>(pill.left) + pen / 2;
+        const float y = static_cast<float>(pill.top) + pen / 2;
+        const float w = static_cast<float>(width) - pen;
+        const float h = static_cast<float>(height) - pen;
+        // A pill: two half circles joined by straight lines (CloseFigure adds them).
+        Gdiplus::GraphicsPath path;
+        path.AddArc(x, y, h, h, 90, 180);
+        path.AddArc(x + w - h, y, h, h, 270, 180);
+        path.CloseFigure();
+        Gdiplus::SolidBrush fill(to_gdiplus(on ? accent : palette_.background));
+        g.FillPath(&fill, &path);
+        Gdiplus::Pen outline(to_gdiplus(on ? accent : line), pen);
+        g.DrawPath(&outline, &path);
 
-    const int knob = height - scale(10);
-    const int knob_left = on ? pill.right - scale(5) - knob : pill.left + scale(5);
-    const int knob_top = pill.top + (height - knob) / 2;
-    UniqueGdi<HBRUSH> knob_fill(::CreateSolidBrush(on ? palette_.knob : line));
-    UniqueGdi<HPEN> knob_pen(::CreatePen(PS_SOLID, 1, on ? palette_.knob : line));
-    ::SelectObject(dc, knob_fill.get());
-    ::SelectObject(dc, knob_pen.get());
-    ::Ellipse(dc, knob_left, knob_top, knob_left + knob, knob_top + knob);
-    // Put the original objects back before ours are deleted (a DC must never hold a deleted one).
-    ::SelectObject(dc, old_brush);
-    ::SelectObject(dc, old_pen);
+        const float knob = static_cast<float>(height - scale(10));
+        const float knob_left = on ? static_cast<float>(pill.right - scale(5)) - knob
+                                   : static_cast<float>(pill.left + scale(5));
+        const float knob_top = static_cast<float>(pill.top) + (static_cast<float>(height) - knob) / 2;
+        Gdiplus::SolidBrush knob_fill(to_gdiplus(on ? palette_.knob : line));
+        g.FillEllipse(&knob_fill, knob_left, knob_top, knob, knob);
+    }  // the Graphics object is done with the DC before GDI draws the text
 
     const std::wstring text = text_of(item.hwndItem);
     RECT text_area{pill.right + scale(10), area.top, area.right, area.bottom};
@@ -830,13 +868,16 @@ LRESULT SettingsWindow::draw_slider(const NMCUSTOMDRAW& draw) {
         const int size = std::min(r.right - r.left, r.bottom - r.top) - scale(2);
         const int left = (r.left + r.right - size) / 2;
         const int top = (r.top + r.bottom - size) / 2;
-        UniqueGdi<HBRUSH> fill(::CreateSolidBrush(accent));
-        UniqueGdi<HPEN> ring(::CreatePen(PS_SOLID, scale(3), palette_.field));
-        HGDIOBJ old_brush = ::SelectObject(draw.hdc, fill.get());
-        HGDIOBJ old_pen = ::SelectObject(draw.hdc, ring.get());
-        ::Ellipse(draw.hdc, left, top, left + size, top + size);
-        ::SelectObject(draw.hdc, old_brush);
-        ::SelectObject(draw.hdc, old_pen);
+        // A ring in the field colour with an accent dot inside, like Windows 11's slider.
+        Gdiplus::Graphics g(draw.hdc);
+        smooth(g);
+        const auto outer = static_cast<float>(size);
+        const auto ring = static_cast<float>(scale(3));
+        Gdiplus::SolidBrush ring_fill(to_gdiplus(palette_.field));
+        g.FillEllipse(&ring_fill, static_cast<float>(left), static_cast<float>(top), outer, outer);
+        Gdiplus::SolidBrush dot(to_gdiplus(accent));
+        g.FillEllipse(&dot, static_cast<float>(left) + ring, static_cast<float>(top) + ring,
+                      outer - 2 * ring, outer - 2 * ring);
         return CDRF_SKIPDEFAULT;
     }
     return CDRF_DODEFAULT;
@@ -891,7 +932,7 @@ LRESULT SettingsWindow::on_message(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lp
             COLORREF color = palette_.text;
             if (control == status_) {
                 color = status_error_ ? palette_.error : palette_.secondary;
-            } else if (control == interval_hint_ || control == loop_hint_) {
+            } else if (control == interval_hint_ || control == loop_hint_ || control == version_) {
                 color = palette_.secondary;
             }
             ::SetTextColor(dc, color);

@@ -114,6 +114,7 @@ private:
     bool dark_ = false;
     Palette palette_{};
     bool status_error_ = false;
+    ULONG_PTR gdiplus_ = 0;  // GDI+ session (anti-aliased switches), see the constructor
     HICON big_icon_ = nullptr;
     HICON small_icon_ = nullptr;
     UniqueGdi<HFONT> font_;
@@ -131,6 +132,7 @@ private:
     HWND loop_end_ = nullptr, whole_video_ = nullptr, loop_hint_ = nullptr;
     HWND compatible_ = nullptr, preview_ = nullptr;
     HWND status_ = nullptr, open_file_button_ = nullptr, apply_ = nullptr, close_ = nullptr;
+    HWND version_ = nullptr;
     HWND tooltip_ = nullptr;
 };
 
