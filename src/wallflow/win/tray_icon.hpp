@@ -28,6 +28,7 @@ public:
 
 private:
     NOTIFYICONDATAW data_{};
+    HICON icon_ = nullptr;  // owned: destroyed with the tray icon
     bool shown_ = false;
 };
 

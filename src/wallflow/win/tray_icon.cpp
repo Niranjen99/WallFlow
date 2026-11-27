@@ -4,6 +4,8 @@
 #include <memory>
 #include <type_traits>
 
+#include "wallflow/win/theme.hpp"
+
 namespace wallflow::win {
 
 namespace {
@@ -20,13 +22,22 @@ TrayIcon::TrayIcon(HWND owner, UINT callback_message) {
     data_.uID = 1;
     data_.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
     data_.uCallbackMessage = callback_message;
-    data_.hIcon = ::LoadIconW(nullptr, IDI_APPLICATION);  // a real icon comes later
+    // The app icon from the exe's resources, at the small-icon size for this screen (the
+    // .ico has 16 to 40 px versions; Windows picks the closest). In the unit tests the
+    // resource is not there (it belongs to wallflow.exe), so fall back to Windows' own.
+    icon_ = static_cast<HICON>(::LoadImageW(::GetModuleHandleW(nullptr), MAKEINTRESOURCEW(kAppIconId),
+                                            IMAGE_ICON, ::GetSystemMetrics(SM_CXSMICON),
+                                            ::GetSystemMetrics(SM_CYSMICON), LR_DEFAULTCOLOR));
+    data_.hIcon = icon_ != nullptr ? icon_ : ::LoadIconW(nullptr, IDI_APPLICATION);
     ::wcscpy_s(data_.szTip, L"WallFlow");
 }
 
 TrayIcon::~TrayIcon() {
     if (shown_) {
         ::Shell_NotifyIconW(NIM_DELETE, &data_);
+    }
+    if (icon_ != nullptr) {
+        ::DestroyIcon(icon_);  // loaded without LR_SHARED, so it is ours to free
     }
 }
 

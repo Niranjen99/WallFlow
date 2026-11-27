@@ -12,6 +12,7 @@
 #include "wallflow/win/autostart.hpp"
 #include "wallflow/win/log.hpp"
 #include "wallflow/win/settings_file.hpp"
+#include "wallflow/win/theme.hpp"
 
 namespace wallflow::win {
 
@@ -68,6 +69,7 @@ App::App(HINSTANCE instance, CommandLine start) : instance_(instance), start_(st
         throw std::runtime_error("CreateWindowExW failed for the controller window");
     }
 
+    follow_system_theme_for_menus();  // before the first menu is shown
     tray_ = std::make_unique<TrayIcon>(hwnd_, kTrayMessage);
     tray_->show();
 
@@ -460,6 +462,13 @@ LRESULT App::on_message(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
                     update_pause();
                 }
                 return TRUE;
+            }
+            break;
+
+        case WM_SETTINGCHANGE:
+            if (is_theme_change(lparam)) {
+                log(apps_use_dark_theme() ? L"theme: dark" : L"theme: light");
+                refresh_menu_theme();
             }
             break;
 

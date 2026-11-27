@@ -64,6 +64,7 @@ add_library(wallflow_core
   src/wallflow/win/folder_watcher.cpp
   src/wallflow/win/settings_file.cpp
   src/wallflow/win/autostart.cpp
+  src/wallflow/win/theme.cpp
 )
 target_include_directories(wallflow_core PUBLIC src)
 target_compile_definitions(wallflow_core PRIVATE WALLFLOW_VERSION="${PROJECT_VERSION}")
@@ -71,8 +72,14 @@ target_compile_definitions(wallflow_core PRIVATE WALLFLOW_VERSION="${PROJECT_VER
 target_link_libraries(wallflow_core PUBLIC wallflow_options libmpv dwmapi wtsapi32 shell32 ole32 advapi32)
 target_link_libraries(wallflow_core PRIVATE nlohmann_json::nlohmann_json)
 
-# WIN32: a GUI program (entry point wWinMain, no console window).
-add_executable(wallflow WIN32 src/main.cpp)
+# The exe's resources: icon and version info. configure_file fills in the version and the
+# icon's full path (forward slashes, which the resource compiler accepts).
+set(WALLFLOW_ICON "${CMAKE_SOURCE_DIR}/assets/wallflow.ico")
+configure_file(src/wallflow.rc.in "${CMAKE_BINARY_DIR}/wallflow.rc" @ONLY)
+
+# WIN32: a GUI program (entry point wWinMain, no console window). CMake compiles the .rc
+# with the resource compiler and embeds the .manifest in the exe.
+add_executable(wallflow WIN32 src/main.cpp "${CMAKE_BINARY_DIR}/wallflow.rc" src/wallflow.manifest)
 target_link_libraries(wallflow PRIVATE wallflow_core)
 wallflow_copy_libmpv(wallflow)
 

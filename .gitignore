@@ -12,3 +12,4 @@ CLAUDE.md
 .vs/
 .vscode/
 *.user
+__pycache__/
