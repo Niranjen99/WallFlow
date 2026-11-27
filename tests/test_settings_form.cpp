@@ -78,3 +78,15 @@ TEST(SettingsForm, VideoRowsShowEachVideosLoop) {
     EXPECT_EQ(rows[1].start, L"0:02");  // matched ignoring case
     EXPECT_EQ(rows[1].end, L"");
 }
+
+TEST(SettingsForm, SetCompatibleReplacesAnEntryThatDiffersOnlyInCase) {
+    Settings settings;
+    settings.compatible_decoding.insert(L"Clip.MP4");
+    wallflow::set_compatible(settings, L"clip.mp4", true);
+    EXPECT_EQ(settings.compatible_decoding.size(), 1u);
+    EXPECT_TRUE(settings.compatible_for(L"CLIP.mp4"));
+    wallflow::set_compatible(settings, L"CLIP.MP4", false);
+    EXPECT_TRUE(settings.compatible_decoding.empty());
+    const auto rows = wallflow::video_rows({L"clip.mp4"}, settings);
+    EXPECT_FALSE(rows[0].compatible);
+}

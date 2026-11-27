@@ -20,6 +20,7 @@ namespace wallflow::win {
 struct VideoSource {
     std::filesystem::path file;
     LoopSetting loop;
+    bool compatible = false;  // decode with Vulkan instead of DirectX (see MpvPlayer::load)
 
     friend bool operator==(const VideoSource&, const VideoSource&) = default;
 };

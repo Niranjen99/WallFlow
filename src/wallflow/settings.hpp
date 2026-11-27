@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <map>
 #include <optional>
+#include <set>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -22,7 +23,8 @@ namespace wallflow {
 //     "lock_screen_picture": false,
 //     "start_with_windows": false,
 //     "videos": {
-//       "goku-hero.mp4": { "start": "0:02", "end": "0:05" }
+//       "goku-hero.mp4": { "start": "0:02", "end": "0:05" },
+//       "glitchy.mp4": { "compatible_decoding": true }
 //     }
 //   }
 //
@@ -37,9 +39,13 @@ struct Settings {
     bool start_with_windows = false;
     // Loop range per video, by file name (matched ignoring case).
     std::map<std::wstring, LoopSetting> loops;
+    // Videos decoded with Vulkan instead of DirectX, by file name (matched ignoring case).
+    // For videos the GPU's DirectX decoder shows with corrupted blocks.
+    std::set<std::wstring> compatible_decoding;
 
     // The loop setting for `video`, or none.
     [[nodiscard]] LoopSetting loop_for(const std::filesystem::path& video) const;
+    [[nodiscard]] bool compatible_for(const std::filesystem::path& video) const;
 
     friend bool operator==(const Settings&, const Settings&) = default;
 };

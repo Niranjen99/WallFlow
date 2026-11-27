@@ -76,7 +76,7 @@ void VideoEngine::play(const VideoSource& first, bool paused, std::optional<doub
     next_ = std::move(next);
     rotation_.start_video(now(), paused);
     shown().video = first;
-    shown().player->load(first.file, first.loop, paused);
+    shown().player->load(first.file, first.loop, paused, first.compatible);
     log(L"playing " + name_of(first));
     // The waiting player stays empty until shortly before the loop end (arm_preload).
 }
@@ -120,7 +120,7 @@ void VideoEngine::switch_now(const VideoSource& video) {
     ::KillTimer(controller_, preload_timer_);
     timer_armed_ = false;
     Slot& wait = waiting();
-    wait.player->load(video.file, video.loop, true);
+    wait.player->load(video.file, video.loop, true, video.compatible);
     wait.video = video;
     waiting_is_switch_ = true;
     switch_now_ = true;
@@ -208,7 +208,7 @@ void VideoEngine::prepare_waiting() {
     if (wait.video == target && wait.player->loaded()) {
         wait.player->rewind();  // already has this loop (short loops stay loaded): just seek
     } else {
-        wait.player->load(target->file, target->loop, true);
+        wait.player->load(target->file, target->loop, true, target->compatible);
     }
     wait.video = target;
     log(waiting_is_switch_ ? L"preloading next video: " + name_of(*target)
@@ -263,7 +263,7 @@ void VideoEngine::handle_errors() {
         }
         if (next && *next != *on.video) {
             on.video = next;
-            on.player->load(next->file, next->loop, paused_);
+            on.player->load(next->file, next->loop, paused_, next->compatible);
             rotation_.start_video(now(), paused_);
             log(L"playing " + name_of(*next));
         } else {

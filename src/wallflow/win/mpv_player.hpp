@@ -37,10 +37,15 @@ public:
     //
     // The range is checked against the video's real length once the file is loaded (see
     // resolve_loop); range() then returns what is actually played.
-    void load(const std::filesystem::path& file, const LoopSetting& loop, bool paused);
+    //
+    // `compatible`: decode this file with Vulkan (copied back to memory) instead of DirectX.
+    // Some GPU drivers decode some videos wrongly through DirectX (blocks of wrong colours);
+    // this costs a little more CPU and memory but shows the right picture.
+    void load(const std::filesystem::path& file, const LoopSetting& loop, bool paused,
+              bool compatible = false);
 
     // Same with an mpv URL such as "av://lavfi:testsrc" (a generated test pattern).
-    void load_url(const std::string& url, const LoopSetting& loop, bool paused);
+    void load_url(const std::string& url, const LoopSetting& loop, bool paused, bool compatible = false);
 
     // Goes back to the start of the range (exact seek). The pause state does not change, so a
     // player that reached the end stays paused on the start frame until set_paused(false).

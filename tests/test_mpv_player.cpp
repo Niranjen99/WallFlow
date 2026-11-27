@@ -227,6 +227,17 @@ TEST(MpvPlayer, MutedByDefaultAudioCanBeTurnedOn) {
     EXPECT_EQ(player.property("volume"), "100.000000");
 }
 
+TEST(MpvPlayer, CompatibleDecodingIsSetForThatFileOnly) {
+    Pump pump;
+    MpvPlayer player(nullptr, pump.wakeup());
+    player.load(test_video(), {}, true, true);
+    ASSERT_TRUE(pump.run_until(player, [&] { return player.ready(); }));
+    EXPECT_EQ(player.property("hwdec"), "vulkan-copy");
+    player.load(test_video(), {}, true);  // the next file: back to the default
+    ASSERT_TRUE(pump.run_until(player, [&] { return player.ready(); }));
+    EXPECT_EQ(player.property("hwdec"), "auto-safe");
+}
+
 TEST(MpvPlayer, MissingFileReportsAnError) {
     Pump pump;
     MpvPlayer player(nullptr, pump.wakeup());

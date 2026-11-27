@@ -33,6 +33,8 @@ enum ControlId : int {
     kLoopStart,
     kLoopEnd,
     kWholeVideo,
+    kCompatible,
+    kPreview,
     kOpenFile,
     kApply,
     kClose,
@@ -40,7 +42,7 @@ enum ControlId : int {
 
 // Client area size in pixels at 100% scaling (96 DPI); scale() converts.
 constexpr int kWidth = 520;
-constexpr int kHeight = 604;
+constexpr int kHeight = 636;
 constexpr int kMargin = 20;
 
 // Windows 11 style colours. The accent is the logo's violet, so the window matches the icon.
@@ -51,6 +53,11 @@ constexpr wchar_t kLoopTooltip[] =
     L"Memory: a loop of 4 seconds or less keeps a second video player loaded all the time, "
     L"which roughly doubles WallFlow's memory use. Longer loops load it only for the last "
     L"2 seconds of each loop.";
+
+constexpr wchar_t kCompatibleTooltip[] =
+    L"Decodes this video with Vulkan instead of DirectX. Turn it on if this video shows blocks "
+    L"of wrong colours: some GPU drivers decode some videos wrongly through DirectX. Costs a "
+    L"little more (measured with a 4K video on an RTX 3070: about +1.5% CPU, +250 MB).";
 
 // The standard Windows folder picker. COM: CoCreateInstance makes the dialog object;
 // ComPtr calls Release() on each interface when it goes out of scope, like a unique_ptr for
@@ -99,8 +106,13 @@ HICON load_app_icon(int size) {
 
 }  // namespace
 
-SettingsWindow::SettingsWindow(HINSTANCE instance, ChangeHandler on_change, Action open_file)
-    : instance_(instance), on_change_(std::move(on_change)), open_file_(std::move(open_file)) {
+SettingsWindow::SettingsWindow(HINSTANCE instance, ChangeHandler on_change, Action open_file,
+                               PreviewHandler on_preview, Action on_closed)
+    : instance_(instance),
+      on_change_(std::move(on_change)),
+      open_file_(std::move(open_file)),
+      on_preview_(std::move(on_preview)),
+      on_closed_(std::move(on_closed)) {
     // The list view and the slider live in comctl32; this registers their window classes.
     INITCOMMONCONTROLSEX controls{sizeof controls, ICC_LISTVIEW_CLASSES | ICC_BAR_CLASSES | ICC_TAB_CLASSES};
     ::InitCommonControlsEx(&controls);
@@ -275,8 +287,8 @@ void SettingsWindow::create_controls() {
     list_ = add(WC_LISTVIEWW, L"",
                 LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS | LVS_NOSORTHEADER | WS_TABSTOP, kVideoList);
     ListView_SetExtendedListViewStyle(list_, LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER);
-    const wchar_t* columns[] = {L"Video", L"Loop start", L"Loop end"};
-    for (int i = 0; i < 3; ++i) {
+    const wchar_t* columns[] = {L"Video", L"Loop start", L"Loop end", L"Decoding"};
+    for (int i = 0; i < 4; ++i) {
         LVCOLUMNW column{};
         column.mask = LVCF_TEXT;
         column.pszText = const_cast<wchar_t*>(columns[i]);  // the API is not const-correct
@@ -291,6 +303,8 @@ void SettingsWindow::create_controls() {
     loop_end_label_ = add(WC_STATICW, L"Loop end", label);
     loop_end_ = add(WC_EDITW, L"", field, kLoopEnd, WS_EX_CLIENTEDGE);
     whole_video_ = add(WC_BUTTONW, L"Whole video", BS_PUSHBUTTON | WS_TABSTOP, kWholeVideo);
+    compatible_ = add(WC_BUTTONW, L"Compatible decoding (if this video shows glitches)", toggle, kCompatible);
+    preview_ = add(WC_BUTTONW, L"Preview", BS_PUSHBUTTON | WS_TABSTOP, kPreview);
     loop_hint_ = add(WC_STATICW,
                      L"Pick a video, then type its loop start and end in seconds (2, 4.5) or as 1:30.",
                      label);
@@ -318,6 +332,15 @@ void SettingsWindow::create_controls() {
         info.hwnd = hwnd_;
         info.uId = reinterpret_cast<UINT_PTR>(tool);
         info.lpszText = const_cast<wchar_t*>(kLoopTooltip);
+        ::SendMessageW(tooltip_, TTM_ADDTOOLW, 0, reinterpret_cast<LPARAM>(&info));
+    }
+    {
+        TOOLINFOW info{};
+        info.cbSize = sizeof info;
+        info.uFlags = TTF_IDISHWND | TTF_SUBCLASS;
+        info.hwnd = hwnd_;
+        info.uId = reinterpret_cast<UINT_PTR>(compatible_);
+        info.lpszText = const_cast<wchar_t*>(kCompatibleTooltip);
         ::SendMessageW(tooltip_, TTM_ADDTOOLW, 0, reinterpret_cast<LPARAM>(&info));
     }
     // Labels only get mouse messages (and so tooltips) with SS_NOTIFY.
@@ -357,21 +380,26 @@ void SettingsWindow::layout() {
     place(loop_end_label_, m + 170, 460, 62, row);
     place(loop_end_, m + 234, 460, 80, row);
     place(whole_video_, right - 110, 459, 110, 28);
-    place(loop_hint_, m, 490, right - m, 22);
+    place(compatible_, m, 492, 360, row);
+    place(preview_, right - 110, 491, 110, 28);
+    place(loop_hint_, m, 524, right - m, 22);
 
-    place(status_, m, 522, right - m, 22);
-    place(open_file_button_, m, 560, 150, 30);
-    place(apply_, right - 96 - 10 - 96, 560, 96, 30);
-    place(close_, right - 96, 560, 96, 30);
+    place(status_, m, 554, right - m, 22);
+    place(open_file_button_, m, 592, 150, 30);
+    place(apply_, right - 96 - 10 - 96, 592, 96, 30);
+    place(close_, right - 96, 592, 96, 30);
 
     // Columns: the loop columns fixed, the name takes what is left (minus a scrollbar).
     RECT list{};
     ::GetClientRect(list_, &list);
-    const int time_column = scale(84);
+    const int time_column = scale(76);
+    const int decoding_column = scale(88);
     const int scrollbar = ::GetSystemMetricsForDpi(SM_CXVSCROLL, dpi_);
-    ListView_SetColumnWidth(list_, 0, std::max(scale(100), static_cast<int>(list.right) - 2 * time_column - scrollbar));
+    ListView_SetColumnWidth(list_, 0, std::max(scale(100), static_cast<int>(list.right) - 2 * time_column -
+                                                                decoding_column - scrollbar));
     ListView_SetColumnWidth(list_, 1, time_column);
     ListView_SetColumnWidth(list_, 2, time_column);
+    ListView_SetColumnWidth(list_, 3, decoding_column);
 
     // Inner padding for the text fields.
     for (HWND edit : {folder_, interval_, loop_start_, loop_end_}) {
@@ -395,7 +423,7 @@ void SettingsWindow::apply_theme() {
     // Theme classes with a "DarkMode_" prefix are the dark versions of the standard ones,
     // the same ones File Explorer uses. nullptr = back to the control's normal theme.
     const wchar_t* button_theme = dark_ ? L"DarkMode_Explorer" : nullptr;
-    for (HWND button : {browse_, whole_video_, open_file_button_, apply_, close_}) {
+    for (HWND button : {browse_, whole_video_, preview_, open_file_button_, apply_, close_}) {
         ::SetWindowTheme(button, button_theme, nullptr);
     }
     for (HWND edit : {folder_, interval_, loop_start_, loop_end_}) {
@@ -452,6 +480,7 @@ void SettingsWindow::fill_video_list() {
         ListView_InsertItem(list_, &item);
         ListView_SetItemText(list_, i, 1, row.start.data());
         ListView_SetItemText(list_, i, 2, row.end.data());
+        ListView_SetItemText(list_, i, 3, const_cast<wchar_t*>(row.compatible ? L"Compatible" : L""));
         if (row.name == selected_name) {
             reselect = i;
         }
@@ -484,9 +513,10 @@ void SettingsWindow::show_selected_loop() {
     const bool any = row >= 0;
     ::SetWindowTextW(loop_start_, any ? rows_[row].start.c_str() : L"");
     ::SetWindowTextW(loop_end_, any ? rows_[row].end.c_str() : L"");
-    for (HWND control : {loop_start_, loop_end_, whole_video_}) {
+    for (HWND control : {loop_start_, loop_end_, whole_video_, compatible_, preview_}) {
         ::EnableWindow(control, any);
     }
+    ::InvalidateRect(compatible_, nullptr, FALSE);
 }
 
 void SettingsWindow::set_status(const std::wstring& text, bool error) {
@@ -503,6 +533,10 @@ bool SettingsWindow::toggle_on(int id) const {
             return settings_.mute;
         case kStartWithWindows:
             return settings_.start_with_windows;
+        case kCompatible: {
+            const int row = selected_row();
+            return row >= 0 && rows_[row].compatible;
+        }
         default:
             return false;
     }
@@ -556,6 +590,7 @@ void SettingsWindow::on_command(int id, int code) {
         case kShuffle:
         case kMute:
         case kStartWithWindows:
+        case kCompatible:
             // A quick second click on an owner-drawn button arrives as a double-click.
             if (code == BN_CLICKED || code == BN_DOUBLECLICKED) {
                 toggle(id);
@@ -574,6 +609,9 @@ void SettingsWindow::on_command(int id, int code) {
             break;
         case kWholeVideo:
             clear_loop();
+            break;
+        case kPreview:
+            preview();
             break;
         case kOpenFile:
             open_file_();
@@ -608,6 +646,19 @@ void SettingsWindow::toggle(int id) {
             status = settings_.start_with_windows ? L"WallFlow will start when you log in."
                                                   : L"WallFlow will not start by itself.";
             break;
+        case kCompatible: {
+            const int row = selected_row();
+            if (row < 0) {
+                return;
+            }
+            VideoRow& video = rows_[row];
+            video.compatible = !video.compatible;
+            set_compatible(settings_, video.name, video.compatible);
+            ListView_SetItemText(list_, row, 3, const_cast<wchar_t*>(video.compatible ? L"Compatible" : L""));
+            status = video.compatible ? L"Compatible decoding for " + video.name + L"."
+                                      : L"Normal decoding for " + video.name + L".";
+            break;
+        }
         default:
             return;
     }
@@ -672,6 +723,16 @@ void SettingsWindow::cancel_folder_picker() {
     }
 }
 
+void SettingsWindow::preview() {
+    const int row = selected_row();
+    if (row < 0 || !commit_loop()) {
+        return;  // nothing selected, or the loop fields have a mistake (shown in red)
+    }
+    const VideoRow& video = rows_[row];
+    on_preview_(settings_.folder / video.name, settings_.loop_for(video.name), video.compatible);
+    set_status(L"Showing " + video.name + L" on the desktop. Apply or Close to go back.", false);
+}
+
 void SettingsWindow::browse_folder() {
     const auto folder = pick_folder(hwnd_, settings_.folder, picker_);
     if (!folder || *folder == settings_.folder) {
@@ -693,13 +754,16 @@ void SettingsWindow::draw_toggle(const DRAWITEMSTRUCT& item) {
     // A switch like Windows 11's: a pill, filled with the accent colour when on, with a knob
     // that sits on the right when on and on the left when off.
     const bool on = toggle_on(static_cast<int>(item.CtlID));
+    const bool disabled = (item.itemState & ODS_DISABLED) != 0;
     const int height = scale(20);
     const int width = scale(40);
     const int top = area.top + (area.bottom - area.top - height) / 2;
     const RECT pill{area.left + scale(1), top, area.left + scale(1) + width, top + height};
 
-    UniqueGdi<HBRUSH> fill(::CreateSolidBrush(on ? palette_.accent : palette_.background));
-    UniqueGdi<HPEN> outline(::CreatePen(PS_SOLID, scale(1), on ? palette_.accent : palette_.secondary));
+    const COLORREF accent = disabled ? palette_.track : palette_.accent;
+    const COLORREF line = disabled ? palette_.track : palette_.secondary;
+    UniqueGdi<HBRUSH> fill(::CreateSolidBrush(on ? accent : palette_.background));
+    UniqueGdi<HPEN> outline(::CreatePen(PS_SOLID, scale(1), on ? accent : line));
     HGDIOBJ old_brush = ::SelectObject(dc, fill.get());
     HGDIOBJ old_pen = ::SelectObject(dc, outline.get());
     ::RoundRect(dc, pill.left, pill.top, pill.right, pill.bottom, height, height);
@@ -707,8 +771,8 @@ void SettingsWindow::draw_toggle(const DRAWITEMSTRUCT& item) {
     const int knob = height - scale(10);
     const int knob_left = on ? pill.right - scale(5) - knob : pill.left + scale(5);
     const int knob_top = pill.top + (height - knob) / 2;
-    UniqueGdi<HBRUSH> knob_fill(::CreateSolidBrush(on ? palette_.knob : palette_.secondary));
-    UniqueGdi<HPEN> knob_pen(::CreatePen(PS_SOLID, 1, on ? palette_.knob : palette_.secondary));
+    UniqueGdi<HBRUSH> knob_fill(::CreateSolidBrush(on ? palette_.knob : line));
+    UniqueGdi<HPEN> knob_pen(::CreatePen(PS_SOLID, 1, on ? palette_.knob : line));
     ::SelectObject(dc, knob_fill.get());
     ::SelectObject(dc, knob_pen.get());
     ::Ellipse(dc, knob_left, knob_top, knob_left + knob, knob_top + knob);
@@ -720,7 +784,7 @@ void SettingsWindow::draw_toggle(const DRAWITEMSTRUCT& item) {
     RECT text_area{pill.right + scale(10), area.top, area.right, area.bottom};
     HGDIOBJ old_font = ::SelectObject(dc, font_.get());
     ::SetBkMode(dc, TRANSPARENT);
-    ::SetTextColor(dc, palette_.text);
+    ::SetTextColor(dc, disabled ? palette_.secondary : palette_.text);
     ::DrawTextW(dc, text.c_str(), -1, &text_area, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_NOPREFIX);
     if ((item.itemState & ODS_FOCUS) != 0 && (item.itemState & ODS_NOFOCUSRECT) == 0) {
         RECT focus = text_area;
@@ -910,6 +974,12 @@ LRESULT SettingsWindow::on_message(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lp
         case WM_CLOSE:  // the title bar's X
             close_asking();
             return 0;
+
+        case WM_DESTROY:
+            if (on_closed_) {
+                on_closed_();  // e.g. end a preview
+            }
+            break;
 
         case WM_NCDESTROY:
             hwnd_ = nullptr;  // the object stays; show() creates a new window next time

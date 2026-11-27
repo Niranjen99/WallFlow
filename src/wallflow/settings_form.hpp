@@ -39,11 +39,16 @@ LoopFields read_loop(std::wstring_view start, std::wstring_view end);
 // ("Clip.MP4" vs "clip.mp4"). A loop with neither start nor end removes the entry.
 void set_loop(Settings& settings, const std::wstring& file_name, const LoopSetting& loop);
 
+// Turns compatible (Vulkan) decoding on or off for the video named `file_name`, replacing an
+// entry that differs only in case.
+void set_compatible(Settings& settings, const std::wstring& file_name, bool on);
+
 // One line of the window's video list.
 struct VideoRow {
     std::wstring name;   // file name, e.g. L"goku.mp4"
     std::wstring start;  // loop start as text, empty = from the beginning
     std::wstring end;    // loop end as text, empty = to the end
+    bool compatible = false;
 };
 std::vector<VideoRow> video_rows(const std::vector<std::filesystem::path>& videos,
                                  const Settings& settings);

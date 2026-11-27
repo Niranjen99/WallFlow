@@ -88,14 +88,17 @@ MpvPlayer::~MpvPlayer() {
     }
 }
 
-void MpvPlayer::load(const std::filesystem::path& file, const LoopSetting& loop, bool paused) {
+void MpvPlayer::load(const std::filesystem::path& file, const LoopSetting& loop, bool paused,
+                     bool compatible) {
     // mpv takes UTF-8. A Windows path is UTF-16 inside std::filesystem::path; u8string()
     // converts it. C++20 returns std::u8string (char8_t), so the bytes are re-read as char.
     const std::u8string utf8 = file.u8string();
-    load_url(std::string(reinterpret_cast<const char*>(utf8.data()), utf8.size()), loop, paused);
+    load_url(std::string(reinterpret_cast<const char*>(utf8.data()), utf8.size()), loop, paused,
+             compatible);
 }
 
-void MpvPlayer::load_url(const std::string& url, const LoopSetting& loop, bool paused) {
+void MpvPlayer::load_url(const std::string& url, const LoopSetting& loop, bool paused,
+                         bool compatible) {
     last_error_.reset();
     ready_ = false;
     at_end_ = false;
@@ -111,6 +114,11 @@ void MpvPlayer::load_url(const std::string& url, const LoopSetting& loop, bool p
     std::string options = std::format("start={}", range_.start);
     if (range_.end) {
         options += std::format(",end={}", *range_.end);
+    }
+    if (compatible) {
+        // Only for this file. If Vulkan video decoding is not available, mpv falls back to
+        // decoding on the CPU, which is slower but also correct.
+        options += ",hwdec=vulkan-copy";
     }
     // Requests on one mpv handle run in order, so the pause is in place before the load.
     set_paused(paused);

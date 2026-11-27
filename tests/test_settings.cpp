@@ -93,6 +93,8 @@ TEST(Settings, SavedTimesAreReadable) {
     Settings s;
     s.interval = 300;
     s.loops[L"a.mp4"] = {2.0, 65.5};
+    s.compatible_decoding.insert(L"a.mp4");
+    s.compatible_decoding.insert(L"only-compatible.mp4");
     const std::string json = settings_to_json(s);
     EXPECT_NE(json.find(R"("interval": "5:00")"), std::string::npos) << json;
     EXPECT_NE(json.find(R"("start": "0:02")"), std::string::npos) << json;
@@ -116,4 +118,21 @@ TEST(FormatTime, ReadsBackTheSame) {
         ASSERT_TRUE(back.has_value()) << text;
         EXPECT_NEAR(*back, t, 1e-9) << text;
     }
+}
+
+TEST(Settings, CompatibleDecodingPerVideo) {
+    const auto parsed = wallflow::parse_settings(R"({
+        "videos": {
+            "Glitchy.MP4": { "compatible_decoding": true },
+            "fine.mp4": { "compatible_decoding": false, "start": 2 },
+            "bad.mp4": { "compatible_decoding": "yes" }
+        }
+    })");
+    const wallflow::Settings& s = parsed.settings;
+    EXPECT_TRUE(s.compatible_for(L"C:/v/glitchy.mp4"));  // ignoring case
+    EXPECT_FALSE(s.compatible_for(L"fine.mp4"));
+    EXPECT_FALSE(s.compatible_for(L"bad.mp4"));
+    EXPECT_EQ(parsed.warnings.size(), 1u);  // "yes" is not true/false
+    // Written and read back: the same settings.
+    EXPECT_EQ(wallflow::parse_settings(wallflow::settings_to_json(s)).settings, s);
 }

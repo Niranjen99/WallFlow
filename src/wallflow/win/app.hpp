@@ -63,6 +63,10 @@ private:
     void open_settings_window();
     // A change made in the settings window: save it to settings.json and apply it.
     void change_settings(const Settings& changed);
+    // Preview from the settings window: show `video` on the desktop now, looping, with no
+    // rotation, until end_preview() (Apply, or the window closes) brings back what was playing.
+    void preview(const VideoSource& video);
+    void end_preview();
     // Settings that apply whatever plays: audio, start with Windows.
     void apply_general_settings();
 
@@ -85,7 +89,8 @@ private:
     std::unique_ptr<FolderWatcher> settings_watcher_;
     std::unique_ptr<SettingsWindow> settings_window_;  // created the first time it is opened
     int attach_attempts_ = 0;
-    bool quitting_ = false;  // the controller window is gone: leave the message loop
+    bool quitting_ = false;
+    bool previewing_ = false;  // the controller window is gone: leave the message loop
 
     std::unique_ptr<WindowEvents> events_;
     HPOWERNOTIFY display_notify_ = nullptr;

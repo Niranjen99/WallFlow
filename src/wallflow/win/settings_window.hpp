@@ -3,6 +3,7 @@
 #include <windows.h>
 #include <commctrl.h>
 
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <string>
@@ -36,8 +37,13 @@ class SettingsWindow {
 public:
     using ChangeHandler = std::function<void(const Settings&)>;
     using Action = std::function<void()>;
+    using PreviewHandler =
+        std::function<void(const std::filesystem::path& file, const LoopSetting& loop, bool compatible)>;
 
-    SettingsWindow(HINSTANCE instance, ChangeHandler on_change, Action open_file);
+    // on_preview: show a video on the desktop now (not applied); on_closed: the window closed
+    // (a preview should end).
+    SettingsWindow(HINSTANCE instance, ChangeHandler on_change, Action open_file,
+                   PreviewHandler on_preview, Action on_closed);
     ~SettingsWindow();
 
     SettingsWindow(const SettingsWindow&) = delete;
@@ -81,6 +87,7 @@ private:
     void close_asking();
     void update_apply_button();
     void clear_loop();
+    void preview();
     void browse_folder();
     void toggle(int id);
     void changed(const std::wstring& status);
@@ -95,6 +102,8 @@ private:
     HINSTANCE instance_;
     ChangeHandler on_change_;
     Action open_file_;
+    PreviewHandler on_preview_;
+    Action on_closed_;
     Settings settings_;  // shown in the window, with edits not applied yet
     Settings applied_;   // what WallFlow uses now
     std::vector<VideoRow> rows_;
@@ -120,6 +129,7 @@ private:
     HWND videos_heading_ = nullptr, list_ = nullptr;
     HWND loop_start_label_ = nullptr, loop_start_ = nullptr, loop_end_label_ = nullptr;
     HWND loop_end_ = nullptr, whole_video_ = nullptr, loop_hint_ = nullptr;
+    HWND compatible_ = nullptr, preview_ = nullptr;
     HWND status_ = nullptr, open_file_button_ = nullptr, apply_ = nullptr, close_ = nullptr;
     HWND tooltip_ = nullptr;
 };

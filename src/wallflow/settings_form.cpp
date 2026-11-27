@@ -106,13 +106,21 @@ void set_loop(Settings& settings, const std::wstring& file_name, const LoopSetti
     }
 }
 
+void set_compatible(Settings& settings, const std::wstring& file_name, bool on) {
+    std::erase_if(settings.compatible_decoding, [&](const std::wstring& name) { return same_name(name, file_name); });
+    if (on) {
+        settings.compatible_decoding.insert(file_name);
+    }
+}
+
 std::vector<VideoRow> video_rows(const std::vector<std::filesystem::path>& videos,
                                  const Settings& settings) {
     std::vector<VideoRow> rows;
     rows.reserve(videos.size());
     for (const std::filesystem::path& video : videos) {
         const LoopSetting loop = settings.loop_for(video);
-        rows.push_back({video.filename().wstring(), time_text(loop.start), time_text(loop.end)});
+        rows.push_back({video.filename().wstring(), time_text(loop.start), time_text(loop.end),
+                        settings.compatible_for(video)});
     }
     return rows;
 }

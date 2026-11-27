@@ -121,6 +121,12 @@ LoopSetting Settings::loop_for(const std::filesystem::path& video) const {
     return {};
 }
 
+bool Settings::compatible_for(const std::filesystem::path& video) const {
+    const std::wstring name = video.filename().wstring();
+    return std::any_of(compatible_decoding.begin(), compatible_decoding.end(),
+                       [&](const std::wstring& file) { return equal_ignoring_case(file, name); });
+}
+
 ParsedSettings parse_settings(std::string_view text) {
     ParsedSettings result;
     // parse(text, callback, allow_exceptions = false, ignore_comments = true): on bad JSON it
@@ -165,6 +171,13 @@ ParsedSettings parse_settings(std::string_view text) {
                 if (loop.start || loop.end) {
                     s.loops[from_utf8(name)] = loop;
                 }
+                if (const auto value = entry.find("compatible_decoding"); value != entry.end()) {
+                    if (!value->is_boolean()) {
+                        read.warn(where + "/compatible_decoding", "must be true or false");
+                    } else if (value->get<bool>()) {
+                        s.compatible_decoding.insert(from_utf8(name));
+                    }
+                }
             }
         }
     }
@@ -192,13 +205,23 @@ std::string settings_to_json(const Settings& s) {
     root["lock_screen_picture"] = s.lock_screen_picture;
     root["start_with_windows"] = s.start_with_windows;
     root["videos"] = nlohmann::ordered_json::object();
-    for (const auto& [file, loop] : s.loops) {
+    // One entry per video that has a loop, compatible decoding, or both; sorted by name.
+    std::set<std::wstring> names(s.compatible_decoding);
+    for (const auto& entry : s.loops) {
+        names.insert(entry.first);
+    }
+    for (const std::wstring& file : names) {
         nlohmann::ordered_json entry = nlohmann::ordered_json::object();
-        if (loop.start) {
-            entry["start"] = format_time(*loop.start);
+        if (const auto loop = s.loops.find(file); loop != s.loops.end()) {
+            if (loop->second.start) {
+                entry["start"] = format_time(*loop->second.start);
+            }
+            if (loop->second.end) {
+                entry["end"] = format_time(*loop->second.end);
+            }
         }
-        if (loop.end) {
-            entry["end"] = format_time(*loop.end);
+        if (s.compatible_decoding.count(file) != 0) {
+            entry["compatible_decoding"] = true;
         }
         root["videos"][to_utf8(file)] = entry;
     }

@@ -167,9 +167,9 @@ std::filesystem::path App::folder() const {
 
 std::optional<VideoSource> App::source_for(const std::filesystem::path& video) const {
     if (!start_.video.empty()) {
-        return VideoSource{video, start_.loop};
+        return VideoSource{video, start_.loop, settings_.compatible_for(video)};
     }
-    return VideoSource{video, settings_.loop_for(video)};
+    return VideoSource{video, settings_.loop_for(video), settings_.compatible_for(video)};
 }
 
 std::optional<VideoSource> App::open_folder() {
@@ -314,12 +314,13 @@ void App::apply_settings(const Settings& changed) {
     if (engine_playing_ && old.interval != changed.interval) {
         engine_->set_rotation(changed.interval, next_video_function());
     }
-    if (engine_playing_ && old.loops != changed.loops) {
-        // A new loop range for the video on screen applies right away (seamlessly).
+    if (engine_playing_ &&
+        (old.loops != changed.loops || old.compatible_decoding != changed.compatible_decoding)) {
+        // A new loop range or decoder for the video on screen applies right away (seamlessly).
         if (const auto now_playing = engine_->current()) {
-            const LoopSetting loop = settings_.loop_for(now_playing->file);
-            if (loop != now_playing->loop) {
-                engine_->switch_now({now_playing->file, loop});
+            const auto wanted = source_for(now_playing->file);
+            if (wanted && *wanted != *now_playing) {
+                engine_->switch_now(*wanted);
             }
         }
     }
@@ -346,12 +347,65 @@ void App::open_settings_window() {
     if (!settings_window_) {
         settings_window_ = std::make_unique<SettingsWindow>(
             instance_, [this](const Settings& changed) { change_settings(changed); },
-            [this] { edit_settings(); });
+            [this] { edit_settings(); },
+            [this](const std::filesystem::path& file, const LoopSetting& loop, bool compatible) {
+                preview({file, loop, compatible});
+            },
+            [this] { end_preview(); });
     }
     settings_window_->show(settings_);
 }
 
+void App::preview(const VideoSource& video) {
+    if (!engine_ || !engine_->alive()) {
+        return;
+    }
+    log(L"preview: " + video.file.filename().wstring());
+    if (!engine_playing_) {
+        // Nothing was playing (no folder yet): play the preview alone. end_preview() rebuilds
+        // the wallpaper, which then plays whatever the settings say (maybe nothing).
+        engine_->play(video, covered_ || locked_ || display_off_, std::nullopt, {});
+        engine_playing_ = true;
+        previewing_ = true;
+        return;
+    }
+    previewing_ = true;
+    engine_->set_rotation(std::nullopt, {});  // stay on the preview: no switching
+    engine_->switch_now(video);
+}
+
+void App::end_preview() {
+    if (!previewing_) {
+        return;
+    }
+    previewing_ = false;
+    log(L"preview ended");
+    if (!engine_) {
+        return;
+    }
+    // What should play now: the current video of the folder (the preview did not move the
+    // playlist on), or the command line's video.
+    std::optional<VideoSource> back;
+    if (!start_.video.empty()) {
+        back = source_for(start_.video);
+    } else if (playlist_ && playlist_->current()) {
+        back = source_for(*playlist_->current());
+    }
+    if (!back) {
+        start_wallpaper();  // the preview was all that played
+        return;
+    }
+    if (start_.video.empty()) {
+        const double interval = command_line_decides() ? start_.interval : settings_.interval;
+        engine_->set_rotation(interval, next_video_function());
+    }
+    if (engine_->current() != back) {
+        engine_->switch_now(*back);
+    }
+}
+
 void App::change_settings(const Settings& changed) {
+    end_preview();  // Apply: back to the normal wallpaper, with the new settings
     // Saved first, then applied. The folder watcher then reports our own write; reading it
     // back finds nothing new, so nothing happens twice.
     if (!settings_file_.empty() && !write_text_file(settings_file_, settings_to_json(changed))) {
