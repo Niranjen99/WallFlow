@@ -17,11 +17,16 @@ namespace {
 constexpr wchar_t kClassName[] = L"WallFlow.Controller";
 constexpr UINT kTrayMessage = WM_APP + 1;
 constexpr UINT kPlayerMessage = WM_APP + 2;  // mpv has events waiting
+constexpr UINT kFolderMessage = WM_APP + 3;  // something changed in the video folder
 constexpr UINT_PTR kAttachTimer = 1;
 constexpr UINT kAttachRetryMs = 500;
 constexpr int kMaxAttachAttempts = 20;  // 10 seconds
 constexpr UINT_PTR kCoverageTimer = 2;
 constexpr UINT_PTR kPreloadTimer = 3;  // the engine's "load the next video now"
+constexpr UINT_PTR kFolderTimer = 4;
+// Copying a video into the folder sends many change events. Rescan once, this long after the
+// last one.
+constexpr UINT kFolderDelayMs = 1000;
 // Window events come in bursts (dragging a window sends dozens). The check runs once, this
 // long after the last event of a burst.
 constexpr UINT kCoverageDelayMs = 200;
@@ -132,6 +137,16 @@ void App::start_player() {
             // A different order every run: seed the shuffle from the OS's random source.
             playlist_ = std::make_unique<Playlist>(start_.shuffle, std::random_device{}());
         }
+        if (!folder_watcher_) {
+            try {
+                // Runs on the watcher's thread: only post. The HWND is copied, not `this`.
+                HWND controller = hwnd_;
+                folder_watcher_ = std::make_unique<FolderWatcher>(
+                    start_.folder, [controller] { ::PostMessageW(controller, kFolderMessage, 0, 0); });
+            } catch (const std::exception& e) {
+                log(L"not watching the folder: " + to_wide(e.what()));
+            }
+        }
         playlist_->set_videos(scan_folder(start_.folder));
         log(L"folder " + start_.folder.wstring() + L": " + std::to_wstring(playlist_->size()) +
             L" videos");
@@ -165,6 +180,21 @@ void App::start_player() {
     }
 }
 
+void App::rescan_folder() {
+    if (!playlist_) {
+        return;
+    }
+    const std::size_t before = playlist_->size();
+    playlist_->set_videos(scan_folder(start_.folder));
+    log(L"folder changed: " + std::to_wstring(before) + L" -> " +
+        std::to_wstring(playlist_->size()) + L" videos");
+    // The folder was empty and now has videos: start. (Otherwise the engine picks the new
+    // list up by itself at the next switch.)
+    if (!engine_playing_ && engine_ && engine_->alive()) {
+        start_player();
+    }
+}
+
 void App::check_coverage() {
     const bool covered = is_monitor_covered(primary_monitor(), snapshot_windows());
     if (covered != covered_) {
@@ -187,6 +217,8 @@ void App::quit() {
     // Remove the wallpaper and the tray icon while the controller window still exists (the
     // tray icon is identified by its owner window), then end the message loop.
     ::KillTimer(hwnd_, kAttachTimer);
+    ::KillTimer(hwnd_, kFolderTimer);
+    folder_watcher_.reset();  // stops its thread
     events_.reset();
     if (display_notify_ != nullptr) {
         ::UnregisterPowerSettingNotification(display_notify_);
@@ -224,9 +256,17 @@ LRESULT App::on_message(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
             }
             return 0;
 
+        case kFolderMessage:
+            // Restarts the countdown: the rescan runs once a burst of changes is over.
+            ::SetTimer(hwnd, kFolderTimer, kFolderDelayMs, nullptr);
+            return 0;
+
         case WM_TIMER:
             if (wparam == kAttachTimer) {
                 try_attach();
+            } else if (wparam == kFolderTimer) {
+                ::KillTimer(hwnd, kFolderTimer);
+                rescan_folder();
             } else if (wparam == kPreloadTimer) {
                 if (engine_) {
                     engine_->on_preload_timer();

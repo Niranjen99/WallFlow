@@ -59,6 +59,7 @@ add_library(wallflow_core
   src/wallflow/win/app.cpp
   src/wallflow/win/mpv_player.cpp
   src/wallflow/win/video_engine.cpp
+  src/wallflow/win/folder_watcher.cpp
 )
 target_include_directories(wallflow_core PUBLIC src)
 target_compile_definitions(wallflow_core PRIVATE WALLFLOW_VERSION="${PROJECT_VERSION}")

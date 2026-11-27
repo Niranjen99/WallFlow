@@ -6,6 +6,7 @@
 
 #include "wallflow/command_line.hpp"
 #include "wallflow/playlist.hpp"
+#include "wallflow/win/folder_watcher.hpp"
 #include "wallflow/win/tray_icon.hpp"
 #include "wallflow/win/video_engine.hpp"
 #include "wallflow/win/window_events.hpp"
@@ -41,6 +42,7 @@ private:
     void try_attach();
     void quit();
     void start_player();
+    void rescan_folder();
 
     // Pause rule: re-checks whether a window covers the monitor, then applies all reasons.
     void check_coverage();
@@ -54,6 +56,7 @@ private:
     std::unique_ptr<VideoEngine> engine_;
     bool engine_playing_ = false;  // play() was called on the current engine
     std::unique_ptr<Playlist> playlist_;  // with --folder
+    std::unique_ptr<FolderWatcher> folder_watcher_;
     int attach_attempts_ = 0;
 
     std::unique_ptr<WindowEvents> events_;

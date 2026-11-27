@@ -22,6 +22,7 @@ add_executable(wallflow_tests
   test_command_line.cpp
   test_playlist.cpp
   test_rotation.cpp
+  test_folder_watcher.cpp
   test_mpv_player.cpp
 )
 target_link_libraries(wallflow_tests PRIVATE wallflow_core GTest::gtest_main)
