@@ -41,6 +41,7 @@ if(WALLFLOW_WERROR)
 endif()
 
 include(cmake/libmpv.cmake)
+include(cmake/nlohmann_json.cmake)
 
 # Everything except the entry point lives in this library, so the tests can link against it.
 add_library(wallflow_core
@@ -51,6 +52,7 @@ add_library(wallflow_core
   src/wallflow/command_line.cpp
   src/wallflow/playlist.cpp
   src/wallflow/rotation.cpp
+  src/wallflow/settings.cpp
   src/wallflow/win/log.cpp
   src/wallflow/win/window_events.cpp
   src/wallflow/win/desktop.cpp
@@ -65,6 +67,7 @@ target_include_directories(wallflow_core PUBLIC src)
 target_compile_definitions(wallflow_core PRIVATE WALLFLOW_VERSION="${PROJECT_VERSION}")
 # dwmapi: DwmGetWindowAttribute (cloaked windows). wtsapi32: lock/unlock notifications.
 target_link_libraries(wallflow_core PUBLIC wallflow_options libmpv dwmapi wtsapi32)
+target_link_libraries(wallflow_core PRIVATE nlohmann_json::nlohmann_json)
 
 # WIN32: a GUI program (entry point wWinMain, no console window).
 add_executable(wallflow WIN32 src/main.cpp)
