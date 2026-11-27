@@ -4,11 +4,13 @@
 
 #include <cstring>
 #include <random>
+#include <utility>
 #include <stdexcept>
 #include <string>
 
 #include "wallflow/coverage.hpp"
 #include "wallflow/win/log.hpp"
+#include "wallflow/win/settings_file.hpp"
 
 namespace wallflow::win {
 
@@ -18,6 +20,7 @@ constexpr wchar_t kClassName[] = L"WallFlow.Controller";
 constexpr UINT kTrayMessage = WM_APP + 1;
 constexpr UINT kPlayerMessage = WM_APP + 2;  // mpv has events waiting
 constexpr UINT kFolderMessage = WM_APP + 3;  // something changed in the video folder
+constexpr UINT kSettingsMessage = WM_APP + 4;  // something changed in %APPDATA%\WallFlow
 constexpr UINT_PTR kAttachTimer = 1;
 constexpr UINT kAttachRetryMs = 500;
 constexpr int kMaxAttachAttempts = 20;  // 10 seconds
@@ -27,6 +30,9 @@ constexpr UINT_PTR kFolderTimer = 4;
 // Copying a video into the folder sends many change events. Rescan once, this long after the
 // last one.
 constexpr UINT kFolderDelayMs = 1000;
+constexpr UINT_PTR kSettingsTimer = 5;
+// Editors may write a file in several steps; read it once they are done.
+constexpr UINT kSettingsDelayMs = 300;
 // Window events come in bursts (dragging a window sends dozens). The check runs once, this
 // long after the last event of a burst.
 constexpr UINT kCoverageDelayMs = 200;
@@ -69,6 +75,19 @@ App::App(HINSTANCE instance, CommandLine start) : instance_(instance), start_(st
     display_notify_ = ::RegisterPowerSettingNotification(hwnd_, &GUID_CONSOLE_DISPLAY_STATE,
                                                          DEVICE_NOTIFY_WINDOW_HANDLE);
     events_ = std::make_unique<WindowEvents>(hwnd_, kCoverageTimer, kCoverageDelayMs);
+
+    // Settings first: they decide what plays. A failure here (no AppData?) is not fatal: the
+    // defaults apply and nothing is saved.
+    try {
+        settings_file_ = settings_folder() / L"settings.json";
+        load_settings();
+        HWND controller = hwnd_;
+        settings_watcher_ = std::make_unique<FolderWatcher>(
+            settings_file_.parent_path(),
+            [controller] { ::PostMessageW(controller, kSettingsMessage, 0, 0); });
+    } catch (const std::exception& e) {
+        log(L"settings file not available: " + to_wide(e.what()));
+    }
 
     check_coverage();  // something may already be maximized when WallFlow starts
     start_wallpaper();
@@ -126,53 +145,88 @@ void App::try_attach() {
     ::SetTimer(hwnd_, kAttachTimer, kAttachRetryMs, nullptr);
 }
 
-void App::start_player() {
-    if (engine_playing_) {
-        return;
+bool App::command_line_decides() const {
+    return !start_.video.empty() || !start_.folder.empty();
+}
+
+std::filesystem::path App::folder() const {
+    return command_line_decides() ? start_.folder : settings_.folder;
+}
+
+std::optional<VideoSource> App::source_for(const std::filesystem::path& video) const {
+    if (!start_.video.empty()) {
+        return VideoSource{video, start_.loop};
     }
-    VideoSource first;
-    VideoEngine::NextVideo next;
-    if (!start_.folder.empty()) {
-        if (!playlist_) {
-            // A different order every run: seed the shuffle from the OS's random source.
-            playlist_ = std::make_unique<Playlist>(start_.shuffle, std::random_device{}());
-        }
-        if (!folder_watcher_) {
+    return VideoSource{video, settings_.loop_for(video)};
+}
+
+std::optional<VideoSource> App::open_folder() {
+    const std::filesystem::path dir = folder();
+    const bool shuffle = command_line_decides() ? start_.shuffle : settings_.shuffle;
+    // A different order every run: seed the shuffle from the OS's random source.
+    playlist_ = std::make_unique<Playlist>(shuffle, std::random_device{}());
+    if (watched_folder_ != dir) {
+        folder_watcher_.reset();
+        watched_folder_.clear();
+        if (!dir.empty()) {
             try {
                 // Runs on the watcher's thread: only post. The HWND is copied, not `this`.
                 HWND controller = hwnd_;
                 folder_watcher_ = std::make_unique<FolderWatcher>(
-                    start_.folder, [controller] { ::PostMessageW(controller, kFolderMessage, 0, 0); });
+                    dir, [controller] { ::PostMessageW(controller, kFolderMessage, 0, 0); });
+                watched_folder_ = dir;
             } catch (const std::exception& e) {
                 log(L"not watching the folder: " + to_wide(e.what()));
             }
         }
-        playlist_->set_videos(scan_folder(start_.folder));
-        log(L"folder " + start_.folder.wstring() + L": " + std::to_wstring(playlist_->size()) +
-            L" videos");
-        const auto video = playlist_->next();
-        if (!video) {
-            return;  // no videos: the normal wallpaper stays
-        }
-        first.file = *video;
-        // The engine calls this when it is time for the next video. `this` outlives the
-        // engine (App owns it), and it is only called on the UI thread.
-        next = [this]() -> std::optional<VideoSource> {
+    }
+    if (dir.empty()) {
+        log(L"no video folder set: choose one in settings.json (tray menu > Edit settings)");
+        return std::nullopt;
+    }
+    playlist_->set_videos(scan_folder(dir));
+    log(L"folder " + dir.wstring() + L": " + std::to_wstring(playlist_->size()) + L" videos");
+    if (const auto video = playlist_->next()) {
+        return source_for(*video);
+    }
+    return std::nullopt;
+}
+
+VideoEngine::NextVideo App::next_video_function() {
+    // The engine calls this when it is time for the next video. `this` outlives the engine
+    // (App owns it), it is only called on the UI thread, and it reads playlist_ at call time,
+    // so it keeps working when the playlist is rebuilt.
+    return [this]() -> std::optional<VideoSource> {
+        if (playlist_) {
             if (const auto video = playlist_->next()) {
-                return VideoSource{*video, {}};
+                return source_for(*video);
             }
-            return std::nullopt;
-        };
-    } else if (!start_.video.empty()) {
-        first = {start_.video, start_.loop};
-    } else {
+        }
+        return std::nullopt;
+    };
+}
+
+void App::start_player() {
+    if (engine_playing_) {
         return;
     }
+    std::optional<VideoSource> first;
+    VideoEngine::NextVideo next;
+    if (!start_.video.empty()) {
+        first = source_for(start_.video);
+    } else {
+        first = open_folder();
+        next = next_video_function();
+    }
+    if (!first) {
+        return;  // nothing to play: the normal wallpaper stays
+    }
+    const double interval = command_line_decides() ? start_.interval : settings_.interval;
     try {
         // If it should be paused right now (e.g. Explorer restarted while a game runs), it
         // loads paused: the first frame is shown, nothing more is decoded.
         paused_ = covered_ || locked_ || display_off_;
-        engine_->play(first, paused_, start_.interval, std::move(next));
+        engine_->play(*first, paused_, interval, std::move(next));
         engine_playing_ = true;
     } catch (const std::exception& e) {
         // Keep the engine (its windows stay invisible): an Explorer restart tries again.
@@ -181,17 +235,83 @@ void App::start_player() {
 }
 
 void App::rescan_folder() {
-    if (!playlist_) {
+    if (!playlist_ || folder().empty()) {
         return;
     }
     const std::size_t before = playlist_->size();
-    playlist_->set_videos(scan_folder(start_.folder));
+    playlist_->set_videos(scan_folder(folder()));
     log(L"folder changed: " + std::to_wstring(before) + L" -> " +
         std::to_wstring(playlist_->size()) + L" videos");
     // The folder was empty and now has videos: start. (Otherwise the engine picks the new
     // list up by itself at the next switch.)
     if (!engine_playing_ && engine_ && engine_->alive()) {
         start_player();
+    }
+}
+
+void App::load_settings() {
+    const std::optional<std::string> text = read_text_file(settings_file_);
+    if (!text) {
+        // First run (or the file was deleted): write the defaults so there is something to edit.
+        log(L"creating " + settings_file_.wstring());
+        if (!write_text_file(settings_file_, settings_to_json(settings_))) {
+            log(L"could not write the settings file");
+        }
+        return;
+    }
+    const ParsedSettings parsed = parse_settings(*text);
+    for (const std::string& warning : parsed.warnings) {
+        log(L"settings.json: " + to_wide(warning));
+    }
+    if (!parsed.valid_json) {
+        // Probably saved halfway through an edit: keep what we have until it is valid again.
+        return;
+    }
+    apply_settings(parsed.settings);
+}
+
+void App::apply_settings(const Settings& changed) {
+    // std::exchange: settings_ becomes `changed`, and `old` gets what settings_ was before.
+    const Settings old = std::exchange(settings_, changed);
+    if (old == changed) {
+        return;  // e.g. the file was saved without changes
+    }
+    log(L"settings changed");
+    if (command_line_decides() || !engine_) {
+        return;  // the command line decides what plays
+    }
+
+    if (old.folder != changed.folder || old.shuffle != changed.shuffle) {
+        if (!engine_playing_) {
+            start_player();
+        } else if (const auto first = open_folder()) {
+            engine_->set_rotation(changed.interval, next_video_function());
+            engine_->switch_now(*first);
+        }
+        return;
+    }
+    if (engine_playing_ && old.interval != changed.interval) {
+        engine_->set_rotation(changed.interval, next_video_function());
+    }
+    if (engine_playing_ && old.loops != changed.loops) {
+        // A new loop range for the video on screen applies right away (seamlessly).
+        if (const auto now_playing = engine_->current()) {
+            const LoopSetting loop = settings_.loop_for(now_playing->file);
+            if (loop != now_playing->loop) {
+                engine_->switch_now({now_playing->file, loop});
+            }
+        }
+    }
+}
+
+void App::edit_settings() {
+    // Notepad is on every Windows PC; a .json file may have no "open" program at all.
+    // ShellExecuteW returns a value greater than 32 on success (a 16-bit Windows convention).
+    const std::wstring args = L"\"" + settings_file_.wstring() + L"\"";
+    const auto result = reinterpret_cast<INT_PTR>(
+        ::ShellExecuteW(nullptr, L"open", L"notepad.exe", args.c_str(), nullptr, SW_SHOWNORMAL));
+    if (result <= 32) {
+        log(L"could not open notepad");
     }
 }
 
@@ -218,7 +338,9 @@ void App::quit() {
     // tray icon is identified by its owner window), then end the message loop.
     ::KillTimer(hwnd_, kAttachTimer);
     ::KillTimer(hwnd_, kFolderTimer);
+    ::KillTimer(hwnd_, kSettingsTimer);
     folder_watcher_.reset();  // stops its thread
+    settings_watcher_.reset();
     events_.reset();
     if (display_notify_ != nullptr) {
         ::UnregisterPowerSettingNotification(display_notify_);
@@ -245,8 +367,17 @@ LRESULT App::on_message(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
             break;
 
         case kTrayMessage:
-            if (LOWORD(lparam) == WM_RBUTTONUP && tray_->show_menu() == TrayIcon::kQuit) {
-                quit();
+            if (LOWORD(lparam) == WM_RBUTTONUP) {
+                switch (tray_->show_menu()) {
+                    case TrayIcon::kEditSettings:
+                        edit_settings();
+                        break;
+                    case TrayIcon::kQuit:
+                        quit();
+                        break;
+                    default:
+                        break;
+                }
             }
             return 0;
 
@@ -254,6 +385,10 @@ LRESULT App::on_message(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
             if (engine_) {
                 engine_->on_player_message();
             }
+            return 0;
+
+        case kSettingsMessage:
+            ::SetTimer(hwnd, kSettingsTimer, kSettingsDelayMs, nullptr);
             return 0;
 
         case kFolderMessage:
@@ -264,6 +399,9 @@ LRESULT App::on_message(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
         case WM_TIMER:
             if (wparam == kAttachTimer) {
                 try_attach();
+            } else if (wparam == kSettingsTimer) {
+                ::KillTimer(hwnd, kSettingsTimer);
+                load_settings();
             } else if (wparam == kFolderTimer) {
                 ::KillTimer(hwnd, kFolderTimer);
                 rescan_folder();

@@ -28,6 +28,9 @@ public:
     // No interval: never switch (one video, or rotation off).
     explicit Rotation(std::optional<double> interval) : interval_(interval) {}
 
+    // Changes the interval; the playing time counted so far is kept.
+    void set_interval(std::optional<double> interval) { interval_ = interval; }
+
     // A new video started playing (or is loaded paused) at `now`.
     void start_video(double now, bool paused);
 

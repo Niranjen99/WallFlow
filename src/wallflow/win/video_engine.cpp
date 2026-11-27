@@ -95,6 +95,29 @@ void VideoEngine::set_paused(bool paused) {
     }
 }
 
+void VideoEngine::set_rotation(std::optional<double> interval, NextVideo next) {
+    rotation_.set_interval(next ? interval : std::nullopt);
+    next_ = std::move(next);
+}
+
+void VideoEngine::switch_now(const VideoSource& video) {
+    if (!playing_ || gave_up_) {
+        return;
+    }
+    ::KillTimer(controller_, preload_timer_);
+    timer_armed_ = false;
+    Slot& wait = waiting();
+    wait.player->load(video.file, video.loop, true);
+    wait.video = video;
+    waiting_is_switch_ = true;
+    switch_now_ = true;
+    log(L"switching now to " + name_of(video));
+}
+
+std::optional<VideoSource> VideoEngine::current() const {
+    return slots_[shown_].video;
+}
+
 void VideoEngine::on_player_message() {
     if (!playing_) {
         return;
@@ -114,6 +137,10 @@ void VideoEngine::on_player_message() {
     }
     if (on.player->ready() && !waiting().video && !timer_armed_ && !paused_) {
         arm_preload();
+    }
+    if (switch_now_ && waiting().player->ready()) {
+        swap();
+        return;
     }
     if (on.player->at_end()) {
         if (!waiting().video) {
@@ -194,6 +221,7 @@ void VideoEngine::swap() {
         log(L"loop restart");
     }
     waiting_is_switch_ = false;
+    switch_now_ = false;
 
     // The old player is now the waiting one. Free it, unless the new loop is too short for that.
     Slot& old = waiting();
@@ -241,6 +269,7 @@ void VideoEngine::handle_errors() {
             to_wide(*wait.player->last_error()));
         wait.player->unload();
         wait.video.reset();
+        switch_now_ = false;  // a forced switch to a broken file is dropped
         if (++failures_ >= kMaxFailures) {
             next_ = nullptr;  // stop rotating, keep looping what plays
             log(L"too many videos failed: rotation stopped");

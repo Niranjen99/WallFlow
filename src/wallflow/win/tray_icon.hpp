@@ -24,6 +24,7 @@ public:
     UINT show_menu();
 
     static constexpr UINT kQuit = 1;
+    static constexpr UINT kEditSettings = 2;
 
 private:
     NOTIFYICONDATAW data_{};

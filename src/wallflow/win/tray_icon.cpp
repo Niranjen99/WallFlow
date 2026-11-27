@@ -40,6 +40,8 @@ UINT TrayIcon::show_menu() {
     if (!menu) {
         return 0;
     }
+    ::AppendMenuW(menu.get(), MF_STRING, kEditSettings, L"Edit settings...");
+    ::AppendMenuW(menu.get(), MF_SEPARATOR, 0, nullptr);
     ::AppendMenuW(menu.get(), MF_STRING, kQuit, L"Quit WallFlow");
 
     POINT cursor{};

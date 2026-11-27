@@ -62,11 +62,12 @@ add_library(wallflow_core
   src/wallflow/win/mpv_player.cpp
   src/wallflow/win/video_engine.cpp
   src/wallflow/win/folder_watcher.cpp
+  src/wallflow/win/settings_file.cpp
 )
 target_include_directories(wallflow_core PUBLIC src)
 target_compile_definitions(wallflow_core PRIVATE WALLFLOW_VERSION="${PROJECT_VERSION}")
 # dwmapi: DwmGetWindowAttribute (cloaked windows). wtsapi32: lock/unlock notifications.
-target_link_libraries(wallflow_core PUBLIC wallflow_options libmpv dwmapi wtsapi32)
+target_link_libraries(wallflow_core PUBLIC wallflow_options libmpv dwmapi wtsapi32 shell32 ole32)
 target_link_libraries(wallflow_core PRIVATE nlohmann_json::nlohmann_json)
 
 # WIN32: a GUI program (entry point wWinMain, no console window).

@@ -65,6 +65,17 @@ public:
     // Pauses or resumes what is on screen. The waiting player always stays paused.
     void set_paused(bool paused);
 
+    // Changes the rotation while playing (settings changed). The time played so far counts.
+    void set_rotation(std::optional<double> interval, NextVideo next);
+
+    // Switches to `video` as soon as it is ready, without waiting for the loop end. The same
+    // seamless swap: it loads into the waiting player first. Used when the settings change
+    // what should play (another folder, a new loop range for the video on screen).
+    void switch_now(const VideoSource& video);
+
+    // The video on screen (or loading for the screen), if any.
+    [[nodiscard]] std::optional<VideoSource> current() const;
+
     void on_player_message();
     void on_preload_timer();
 
@@ -97,6 +108,7 @@ private:
     bool playing_ = false;   // play() was called
     bool timer_armed_ = false;
     bool waiting_is_switch_ = false;  // the waiting player holds the next video
+    bool switch_now_ = false;         // swap as soon as the waiting player is ready
     int failures_ = 0;       // videos in a row that failed to load
     bool gave_up_ = false;   // nothing playable: stop trying
     Rotation rotation_{std::nullopt};

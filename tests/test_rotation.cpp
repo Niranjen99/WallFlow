@@ -69,6 +69,15 @@ TEST(Rotation, NewVideoStartsFromZero) {
     EXPECT_DOUBLE_EQ(rotation.played(80), 10);
 }
 
+TEST(Rotation, ChangingTheIntervalKeepsThePlayedTime) {
+    Rotation rotation(300.0);
+    rotation.start_video(0, false);
+    rotation.set_interval(60.0);  // the user shortened it after 50 s
+    EXPECT_TRUE(rotation.switch_at_loop_end(50, 10));
+    rotation.set_interval(std::nullopt);  // rotation turned off
+    EXPECT_FALSE(rotation.switch_at_loop_end(50, 10));
+}
+
 TEST(Rotation, PreloadsShortlyBeforeTheLoopEnd) {
     EXPECT_DOUBLE_EQ(Rotation::preload_delay(30), 30 - Rotation::kPreloadLead);
     EXPECT_DOUBLE_EQ(Rotation::preload_delay(1), 0);  // already too close: load now

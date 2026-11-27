@@ -6,6 +6,7 @@
 
 #include "wallflow/command_line.hpp"
 #include "wallflow/playlist.hpp"
+#include "wallflow/settings.hpp"
 #include "wallflow/win/folder_watcher.hpp"
 #include "wallflow/win/tray_icon.hpp"
 #include "wallflow/win/video_engine.hpp"
@@ -21,7 +22,8 @@ namespace wallflow::win {
 // Windows sends the "TaskbarCreated" broadcast only to top-level windows.
 class App {
 public:
-    // `start.video`: file to play in a loop (start.loop: which part); empty shows nothing.
+    // What plays comes from settings.json, unless the command line names a video or folder
+    // (then the command line wins for what plays; the file still sets everything else).
     App(HINSTANCE instance, CommandLine start);
     ~App();
 
@@ -44,6 +46,20 @@ private:
     void start_player();
     void rescan_folder();
 
+    // Where the videos come from: the command line if it names a video or folder, else the
+    // settings file.
+    [[nodiscard]] bool command_line_decides() const;
+    [[nodiscard]] std::filesystem::path folder() const;
+    [[nodiscard]] std::optional<VideoSource> source_for(const std::filesystem::path& video) const;
+    // (Re)builds the playlist and the folder watcher for folder(). Returns the first video.
+    std::optional<VideoSource> open_folder();
+    VideoEngine::NextVideo next_video_function();
+
+    // settings.json: read it (creating it with defaults the first time) and apply changes.
+    void load_settings();
+    void apply_settings(const Settings& changed);
+    void edit_settings();
+
     // Pause rule: re-checks whether a window covers the monitor, then applies all reasons.
     void check_coverage();
     void update_pause();
@@ -57,6 +73,10 @@ private:
     bool engine_playing_ = false;  // play() was called on the current engine
     std::unique_ptr<Playlist> playlist_;  // with --folder
     std::unique_ptr<FolderWatcher> folder_watcher_;
+    std::filesystem::path watched_folder_;  // the folder folder_watcher_ watches
+    Settings settings_;
+    std::filesystem::path settings_file_;
+    std::unique_ptr<FolderWatcher> settings_watcher_;
     int attach_attempts_ = 0;
 
     std::unique_ptr<WindowEvents> events_;
