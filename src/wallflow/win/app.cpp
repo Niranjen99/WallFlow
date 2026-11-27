@@ -33,8 +33,7 @@ Rect primary_monitor() {
 
 }  // namespace
 
-App::App(HINSTANCE instance, std::filesystem::path video)
-    : instance_(instance), video_(std::move(video)) {
+App::App(HINSTANCE instance, CommandLine start) : instance_(instance), start_(std::move(start)) {
     // Explorer broadcasts this message to all top-level windows whenever the taskbar is
     // (re)created, which is how apps learn that Explorer restarted.
     taskbar_created_ = ::RegisterWindowMessageW(L"TaskbarCreated");
@@ -71,8 +70,7 @@ App::App(HINSTANCE instance, std::filesystem::path video)
 App::~App() {
     // The controller window is a raw HWND, so it is destroyed by hand, after everything that
     // still uses it.
-    player_.reset();
-    wallpaper_.reset();
+    engine_.reset();
     tray_.reset();
     if (hwnd_ != nullptr) {
         ::DestroyWindow(hwnd_);
@@ -92,16 +90,17 @@ int App::run() {
 
 void App::start_wallpaper() {
     ::KillTimer(hwnd_, kAttachTimer);
-    player_.reset();     // first: it draws into the wallpaper window
-    wallpaper_.reset();  // after an Explorer restart the old window is usually already gone
-    wallpaper_ = std::make_unique<WallpaperWindow>(instance_);
+    // After an Explorer restart the old windows are usually already gone.
+    engine_.reset();
+    engine_ = std::make_unique<VideoEngine>(instance_, hwnd_, kPlayerMessage);
+    engine_playing_ = false;
     attach_attempts_ = 0;
     try_attach();
 }
 
 void App::try_attach() {
     ++attach_attempts_;
-    if (const auto layout = wallpaper_->attach()) {
+    if (const auto layout = engine_->attach()) {
         ::KillTimer(hwnd_, kAttachTimer);
         log(std::wstring(L"attached behind the icons (") +
             (*layout == DesktopLayout::Modern ? L"modern" : L"classic") + L" layout), attempt " +
@@ -121,23 +120,18 @@ void App::try_attach() {
 }
 
 void App::start_player() {
-    if (video_.empty() || player_) {
+    if (start_.video.empty() || engine_playing_) {
         return;
     }
-    // The wakeup runs on an mpv thread: it only posts a message, and the UI thread does the
-    // work in process_events(). Capturing the HWND by value is safe: PostMessageW to a window
-    // that no longer exists just fails.
-    HWND controller = hwnd_;
     try {
-        player_ = std::make_unique<MpvPlayer>(
-            wallpaper_->hwnd(), [controller] { ::PostMessageW(controller, kPlayerMessage, 0, 0); });
         // If it should be paused right now (e.g. Explorer restarted while a game runs), it
         // loads paused: the first frame is shown, nothing more is decoded.
         paused_ = covered_ || locked_ || display_off_;
-        player_->load(video_, {}, paused_);
-        log(L"loading " + video_.wstring());
+        engine_->play(start_.video, start_.loop, paused_);
+        engine_playing_ = true;
+        log(L"loading " + start_.video.wstring());
     } catch (const std::exception& e) {
-        player_.reset();
+        // Keep the engine (its windows stay invisible): an Explorer restart tries again.
         log(L"player failed: " + to_wide(e.what()));
     }
 }
@@ -153,8 +147,8 @@ void App::check_coverage() {
 
 void App::update_pause() {
     const bool pause = covered_ || locked_ || display_off_;
-    if (player_ && pause != paused_) {
-        player_->set_paused(pause);
+    if (engine_playing_ && pause != paused_) {
+        engine_->set_paused(pause);
         paused_ = pause;
         log(pause ? L"paused" : L"playing");
     }
@@ -170,8 +164,7 @@ void App::quit() {
         display_notify_ = nullptr;
     }
     ::WTSUnRegisterSessionNotification(hwnd_);
-    player_.reset();
-    wallpaper_.reset();
+    engine_.reset();
     tray_.reset();
     ::DestroyWindow(hwnd_);  // WM_DESTROY posts WM_QUIT
 }
@@ -197,20 +190,8 @@ LRESULT App::on_message(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
             return 0;
 
         case kPlayerMessage:
-            if (player_) {
-                player_->process_events();
-                if (player_->at_end()) {
-                    // Simple loop for now (one player: the seek back may stall briefly).
-                    player_->rewind();
-                    player_->set_paused(paused_);
-                }
-                if (player_->ready() && wallpaper_ && !wallpaper_->revealed()) {
-                    wallpaper_->reveal();
-                    log(L"first frame ready: wallpaper revealed");
-                }
-                if (const auto& error = player_->last_error()) {
-                    log(L"playback error: " + to_wide(*error));
-                }
+            if (engine_) {
+                engine_->on_player_message();
             }
             return 0;
 
@@ -250,8 +231,8 @@ LRESULT App::on_message(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
 
         case WM_DISPLAYCHANGE:
             // Resolution or monitor layout changed: fit the primary monitor again.
-            if (wallpaper_ && wallpaper_->alive()) {
-                wallpaper_->attach();
+            if (engine_ && engine_->alive()) {
+                engine_->attach();
             }
             return 0;
 

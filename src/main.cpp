@@ -2,10 +2,12 @@
 #include <shellapi.h>  // CommandLineToArgvW
 
 #include <exception>
-#include <filesystem>
 #include <memory>
 #include <string>
+#include <utility>
+#include <vector>
 
+#include "wallflow/command_line.hpp"
 #include "wallflow/win/app.hpp"
 
 namespace {
@@ -37,19 +39,24 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         return 0;
     }
 
-    // For now the video comes from the command line: wallflow.exe "C:\Videos\clip.mp4".
+    // For now the video comes from the command line (see command_line.hpp).
     // CommandLineToArgvW splits the line like a C program's argv. It allocates one block,
     // freed with LocalFree; the unique_ptr frees it on every path out of this function.
     int argc = 0;
     std::unique_ptr<LPWSTR, decltype(&::LocalFree)> argv(
         ::CommandLineToArgvW(::GetCommandLineW(), &argc), &::LocalFree);
-    std::filesystem::path video;
-    if (argv && argc > 1) {
-        video = argv.get()[1];
+    std::vector<std::wstring> args;
+    for (int i = 1; argv && i < argc; ++i) {
+        args.emplace_back(argv.get()[i]);
+    }
+    wallflow::CommandLine start = wallflow::parse_command_line(args);
+    if (!start.error.empty()) {
+        ::MessageBoxW(nullptr, start.error.c_str(), L"WallFlow", MB_OK | MB_ICONERROR);
+        return 2;
     }
 
     try {
-        wallflow::win::App app(instance, video);
+        wallflow::win::App app(instance, std::move(start));
         return app.run();
     } catch (const std::exception& e) {
         show_error(e.what());

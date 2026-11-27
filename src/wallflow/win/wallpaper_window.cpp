@@ -54,6 +54,13 @@ void WallpaperWindow::reveal() {
     }
 }
 
+void WallpaperWindow::hide() {
+    if (revealed_ && hwnd_ != nullptr) {
+        ::SetLayeredWindowAttributes(hwnd_, 0, 0, LWA_ALPHA);
+        revealed_ = false;
+    }
+}
+
 WallpaperWindow::~WallpaperWindow() {
     if (hwnd_ != nullptr) {
         HWND parent = ::GetAncestor(hwnd_, GA_PARENT);

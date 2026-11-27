@@ -48,6 +48,7 @@ add_library(wallflow_core
   src/wallflow/desktop_layout.cpp
   src/wallflow/coverage.cpp
   src/wallflow/loop_range.cpp
+  src/wallflow/command_line.cpp
   src/wallflow/win/log.cpp
   src/wallflow/win/window_events.cpp
   src/wallflow/win/desktop.cpp
@@ -55,6 +56,7 @@ add_library(wallflow_core
   src/wallflow/win/tray_icon.cpp
   src/wallflow/win/app.cpp
   src/wallflow/win/mpv_player.cpp
+  src/wallflow/win/video_engine.cpp
 )
 target_include_directories(wallflow_core PUBLIC src)
 target_compile_definitions(wallflow_core PRIVATE WALLFLOW_VERSION="${PROJECT_VERSION}")

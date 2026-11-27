@@ -33,8 +33,9 @@ public:
 
     [[nodiscard]] HWND hwnd() const noexcept { return hwnd_; }
 
-    // Makes the window opaque. Safe to call repeatedly.
+    // Makes the window opaque, or fully transparent again. Safe to call repeatedly.
     void reveal();
+    void hide();
     [[nodiscard]] bool revealed() const noexcept { return revealed_; }
 
 private:
