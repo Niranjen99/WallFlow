@@ -6,7 +6,7 @@
 
 A lightweight live wallpaper app for Windows: it plays videos behind the desktop icons, rotates through a folder of videos with seamless switches, and pauses whenever a maximized or full-screen window (such as a game) covers the screen.
 
-**Status: work in progress.** WallFlow plays videos behind the desktop icons, decoded on the GPU. It loops a video (or a start-to-end part of it), or rotates through a folder, without a black frame or a seek stall at the switch, and notices videos added to or deleted from the folder. It pauses while a maximized or full-screen window covers the screen, the PC is locked or the display is off, lives in the system tray, and recovers by itself when Explorer restarts. A settings window (light or dark, following Windows) changes everything live, and the same settings live in a JSON file you can also edit by hand. See the [Roadmap](#roadmap).
+**Status: work in progress.** WallFlow plays videos behind the desktop icons, decoded on the GPU. It loops a video (or a start-to-end part of it), or rotates through a folder, without a black frame or a seek stall at the switch, and notices videos added to or deleted from the folder. It pauses while a maximized or full-screen window covers the screen, the PC is locked or the display is off, lives in the system tray, and recovers by itself when Explorer restarts. A settings window (light or dark, following Windows) changes everything with one Apply, and the same settings live in a JSON file you can also edit by hand. See the [Roadmap](#roadmap).
 
 **Tech stack:** C++20, Win32 API, libmpv (FFmpeg, Direct3D 11), nlohmann/json, MSVC, CMake, GoogleTest, GitHub Actions.
 
@@ -24,7 +24,7 @@ Get the zip from the [latest release](https://github.com/Niranjen99/WallFlow/rel
 |---|---|
 | ![Settings window, dark](docs/settings-dark.png) | ![Settings window, light](docs/settings-light.png) |
 
-Every change applies at once, with no Save button: pick a folder, set how long each video plays, shuffle, mute or volume, and start with Windows. Pick a video in the list to give it its own loop: type when the loop starts and ends (`0:02`, `90`, `1:02:03.5`), then press Enter or leave the field. A typo is shown in red and not saved. Hover over the loop fields for a note on memory: a loop of 4 seconds or less keeps a second video player loaded all the time.
+Pick a folder, set how many seconds each video plays, shuffle, mute or volume, and start with Windows. Pick a video in the list to give it its own loop: type its start and end in seconds (`2`, `4.5`) or as `1:30`. Nothing changes until you click **Apply** (or press Enter); a typo is shown in red and nothing is applied. Closing with changes not applied asks whether to apply them. Hover over the loop fields for a note on memory: a loop of 4 seconds or less keeps a second video player loaded all the time.
 
 The window writes `%APPDATA%\WallFlow\settings.json`, which you can also edit by hand (the open window follows). Saving from the window rewrites the file, so `//` comments in it are lost.
 
@@ -148,9 +148,13 @@ Folder rotation uses the same swap, with the next video in the waiting player.
 
 - **Plain Win32, laid out in code.** No UI framework: the exe stays under 1 MB with no extra DLLs. Every position is written at 96 DPI and scaled with the monitor's DPI, and dragging the window to a monitor with other scaling lays it out again (`WM_DPICHANGED`).
 - **Light and dark.** The title bar uses the documented `DWMWA_USE_IMMERSIVE_DARK_MODE`. Buttons, text fields, the list and its scrollbars use the dark theme classes Windows ships for File Explorer (`DarkMode_Explorer`, `DarkMode_CFD`, `DarkMode_ItemsView`). Colours come from answering `WM_CTLCOLOR*`. A standard checkbox ignores the text colour in dark mode, so the switches are owner-drawn (`BS_OWNERDRAW`), and the volume slider is custom-drawn (`NM_CUSTOMDRAW`). A light/dark change arrives as `WM_SETTINGCHANGE` with `"ImmersiveColorSet"`, and the window repaints in the new theme.
-- **One path for every change.** The window keeps its own copy of the settings, changes it, and hands the whole copy to the app. The app saves it to settings.json and applies it through the same code as a hand edit, so a new loop or folder still switches seamlessly. The folder watcher then reports that write, but the file matches what is already applied, so nothing happens twice.
+- **One path for every change.** The window keeps two copies of the settings: what WallFlow uses now, and what the window shows with your edits. Apply checks the fields and hands the edited copy to the app. The app saves it to settings.json and applies it through the same code as a hand edit, so a new loop or folder still switches seamlessly. The folder watcher then reports that write, but the file matches what is already applied, so nothing happens twice.
 - **The logic is testable.** What a typed time means, when a loop is too short, and how an edit changes the settings live in `settings_form`, with no window, so they are unit tested.
 - **A bug found while testing.** Quitting from the tray while the folder picker was open left WallFlow running with no windows. The picker runs its own message loop, which swallowed the `WM_QUIT` that ends the main loop. Now quitting closes the picker (`IFileDialog::Close`), and the main loop also stops on a flag set when the controller window is destroyed, so a swallowed `WM_QUIT` can't leave it waiting forever.
+
+## A bug found by a user: the NVIDIA overlay
+
+The first release paused forever on a PC with the NVIDIA app installed. Its GeForce Overlay keeps a screen-sized window open even while the overlay is closed: layered, at opacity 0, and not click-through. The pause rule saw "a window as big as the monitor" and paused. Now a layered window whose opacity (`GetLayeredWindowAttributes`, `LWA_ALPHA`) is 0 never counts as covering the screen. When the overlay is opened with Alt+Z its opacity rises and the wallpaper pauses as it should. A unit test covers both cases.
 
 ## How it watches the folder
 
